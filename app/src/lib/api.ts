@@ -1,4 +1,5 @@
 const API_BASE = import.meta.env.VITE_API_BASE || '';
+const NEEDS_TUNNEL_BYPASS = /loca\.lt$/i.test(API_BASE) || API_BASE.includes('.loca.lt');
 
 export interface PlanRequest {
   user_input: string;
@@ -61,6 +62,14 @@ function buildUrl(path: string): string {
   return `${base}${path}`;
 }
 
+function buildHeaders(init: HeadersInit = {}): Headers {
+  const headers = new Headers(init);
+  if (NEEDS_TUNNEL_BYPASS) {
+    headers.set('bypass-tunnel-reminder', '1');
+  }
+  return headers;
+}
+
 async function parseEventData(chunk: string): Promise<SSEvent | null> {
   const dataLines = chunk
     .split('\n')
@@ -87,7 +96,7 @@ async function postSSE(
 ): Promise<void> {
   const response = await fetch(buildUrl(path), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    headers: buildHeaders({ 'Content-Type': 'application/json', Accept: 'text/event-stream' }),
     body: JSON.stringify(body),
     signal,
   });
@@ -148,7 +157,7 @@ export async function streamChat(
 
 export async function getSession(sessionId: string): Promise<SessionState> {
   const response = await fetch(buildUrl(`/api/session/${sessionId}`), {
-    headers: { Accept: 'application/json' },
+    headers: buildHeaders({ Accept: 'application/json' }),
   });
 
   if (!response.ok) {
@@ -161,7 +170,7 @@ export async function getSession(sessionId: string): Promise<SessionState> {
 
 export async function listSessions(): Promise<{ count: number; sessions: SessionSummary[] }> {
   const response = await fetch(buildUrl('/api/sessions'), {
-    headers: { Accept: 'application/json' },
+    headers: buildHeaders({ Accept: 'application/json' }),
   });
 
   if (!response.ok) {
@@ -175,7 +184,7 @@ export async function listSessions(): Promise<{ count: number; sessions: Session
 export async function deleteSession(sessionId: string): Promise<{ status: string; message: string }> {
   const response = await fetch(buildUrl(`/api/sessions/${sessionId}`), {
     method: 'DELETE',
-    headers: { Accept: 'application/json' },
+    headers: buildHeaders({ Accept: 'application/json' }),
   });
 
   if (!response.ok) {
@@ -187,7 +196,9 @@ export async function deleteSession(sessionId: string): Promise<{ status: string
 }
 
 export async function checkHealth(): Promise<{ status: string; version: string; dependencies: Record<string, string> }> {
-  const response = await fetch(buildUrl('/health'));
+  const response = await fetch(buildUrl('/health'), {
+    headers: buildHeaders(),
+  });
   if (!response.ok) {
     throw new Error(`Health check failed: ${response.status}`);
   }
@@ -195,7 +206,9 @@ export async function checkHealth(): Promise<{ status: string; version: string; 
 }
 
 export async function listTools(): Promise<{ count: number; tools: Array<Record<string, unknown>> }> {
-  const response = await fetch(buildUrl('/api/tools'));
+  const response = await fetch(buildUrl('/api/tools'), {
+    headers: buildHeaders({ Accept: 'application/json' }),
+  });
   if (!response.ok) {
     throw new Error(`List tools failed: ${response.status}`);
   }
