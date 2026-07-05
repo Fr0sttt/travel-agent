@@ -690,10 +690,17 @@ async def collect_preferences(user_input: str, current_preferences: dict | None 
     if current_preferences is None:
         current_preferences = {}
 
-    result = await _extract_preferences_with_llm(user_input, current_preferences)
-    if result is None:
-        # LLM 提取失败（超时/解析出错/接口异常），降级到关键词正则
-        result = _extract_preferences_from_text(user_input)
+    llm_result = await _extract_preferences_with_llm(user_input, current_preferences)
+    rule_result = _extract_preferences_from_text(user_input)
+
+    # LLM 可能只提取出部分字段，不能因为它成功返回就跳过规则兜底。
+    # 这里采用“LLM 优先、规则补缺”的策略，保证目的地/天数/预算这类硬字段尽量完整。
+    result: dict[str, Any] = {}
+    if isinstance(llm_result, dict):
+        result.update({key: value for key, value in llm_result.items() if value not in (None, "", [])})
+    for key, value in rule_result.items():
+        if value not in (None, "", []) and not result.get(key):
+            result[key] = value
 
     # 合并到现有偏好
     merged = dict(current_preferences)

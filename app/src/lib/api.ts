@@ -88,6 +88,10 @@ async function parseEventData(chunk: string): Promise<SSEvent | null> {
   }
 }
 
+function isTerminalEvent(event: SSEvent): boolean {
+  return event.type === 'clarify' || event.type === 'reply' || event.type === 'complete' || event.type === 'error';
+}
+
 async function postSSE(
   path: string,
   body: unknown,
@@ -113,10 +117,30 @@ async function postSSE(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  let receivedTerminalEvent = false;
+
+  const emitEvent = async (chunk: string) => {
+    const event = await parseEventData(chunk);
+    if (!event) return;
+    if (isTerminalEvent(event)) {
+      receivedTerminalEvent = true;
+    }
+    onEvent(event);
+  };
 
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      let chunk: ReadableStreamReadResult<Uint8Array>;
+      try {
+        chunk = await reader.read();
+      } catch (err) {
+        // localtunnel 偶尔会在 SSE 最后一个 chunk 之后触发 ERR_INCOMPLETE_CHUNKED_ENCODING。
+        // 如果已经收到 clarify/reply/complete/error，说明业务结果已落地，不再把它覆盖成网络失败。
+        if (receivedTerminalEvent) return;
+        throw err;
+      }
+
+      const { done, value } = chunk;
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
@@ -125,14 +149,12 @@ async function postSSE(
 
       for (const part of parts) {
         if (!part.trim()) continue;
-        const event = await parseEventData(part);
-        if (event) onEvent(event);
+        await emitEvent(part);
       }
     }
 
     if (buffer.trim()) {
-      const event = await parseEventData(buffer);
-      if (event) onEvent(event);
+      await emitEvent(buffer);
     }
   } finally {
     reader.releaseLock();
