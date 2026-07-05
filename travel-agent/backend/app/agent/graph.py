@@ -742,7 +742,15 @@ async def weather_advisor(state: TravelState) -> TravelState:
         state["current_node"] = "weather_advisor"
         return state
 
-    state["weather"] = weather_data.get("daily", [])
+    weather_daily = weather_data.get("daily", [])
+    weather_source = weather_data.get("source")
+    # get_weather 返回的 source 在外层；行程来源汇总按 daily item 收集，
+    # 所以这里把来源补到每条天气记录上，避免正文有天气但来源说明显示“暂无数据”。
+    if weather_source and isinstance(weather_daily, list):
+        for item in weather_daily:
+            if isinstance(item, dict) and not item.get("source"):
+                item["source"] = weather_source
+    state["weather"] = weather_daily
 
     # 如果有高降雨概率，添加风险提醒
     rainy_days = [
