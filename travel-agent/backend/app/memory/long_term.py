@@ -14,6 +14,7 @@ import time
 import json
 import os
 import hashlib
+import httpx
 
 # ChromaDB向量数据库
 try:
@@ -166,6 +167,262 @@ class _InMemoryClient:
             del self._collections[name]
 
 
+class _ElasticsearchCollection:
+    """Elasticsearch 索引包装器。
+
+    以索引前缀模拟 ChromaDB Collection 接口，便于长期记忆模块无感切换。
+    """
+
+    def __init__(
+        self,
+        index_name: str,
+        base_url: str,
+        vector_dims: int = 384,
+        username: str = "",
+        password: str = "",
+        metadata: dict | None = None,
+    ):
+        self.name = index_name
+        self.metadata = metadata or {}
+        self.base_url = base_url.rstrip("/")
+        self.vector_dims = vector_dims
+        self._auth = (username, password) if username and password else None
+        self._client = httpx.Client(
+            timeout=30.0,
+            auth=self._auth,
+            headers={"Content-Type": "application/json"},
+        )
+        self._ensure_index()
+
+    def _index_url(self, suffix: str = "") -> str:
+        return f"{self.base_url}/{self.name}{suffix}"
+
+    def _ensure_index(self) -> None:
+        """创建索引和向量映射。"""
+        last_error: Exception | None = None
+        for attempt in range(1, 31):
+            try:
+                resp = self._client.head(self._index_url())
+                if resp.status_code == 200:
+                    return
+                if resp.status_code != 404:
+                    resp.raise_for_status()
+
+                mapping = {
+                    "settings": {
+                        "index": {
+                            "number_of_shards": 1,
+                            "number_of_replicas": 0,
+                        }
+                    },
+                    "mappings": {
+                        "properties": {
+                            "content": {"type": "text"},
+                            "metadata": {"type": "object", "dynamic": True},
+                            "embedding": {
+                                "type": "dense_vector",
+                                "dims": self.vector_dims,
+                                "index": True,
+                                "similarity": "cosine",
+                            },
+                            "session_id": {"type": "keyword"},
+                            "type": {"type": "keyword"},
+                            "topic": {"type": "keyword"},
+                            "preference_type": {"type": "keyword"},
+                            "timestamp": {"type": "date"},
+                            "destination": {"type": "keyword"},
+                        }
+                    },
+                }
+                create_resp = self._client.put(self._index_url(), json=mapping)
+                create_resp.raise_for_status()
+                return
+            except Exception as exc:
+                last_error = exc
+                if attempt >= 30:
+                    raise
+                time.sleep(2.0)
+
+        if last_error is not None:
+            raise last_error
+
+    def add(
+        self,
+        ids: list[str],
+        documents: list[str],
+        embeddings: list[list[float]] | None = None,
+        metadatas: list[dict] | None = None,
+    ) -> None:
+        """批量写入文档。"""
+        if not ids or not documents:
+            return
+
+        bulk_lines: list[str] = []
+        for i, doc_id in enumerate(ids):
+            document = documents[i]
+            metadata = metadatas[i] if metadatas and i < len(metadatas) else {}
+            embedding = embeddings[i] if embeddings and i < len(embeddings) else [0.0] * self.vector_dims
+
+            payload = {
+                "content": document,
+                "metadata": metadata,
+                "embedding": embedding,
+            }
+            if isinstance(metadata, dict):
+                for key, value in metadata.items():
+                    if isinstance(value, (str, int, float, bool)):
+                        payload[key] = value
+
+            bulk_lines.append(json.dumps({"index": {"_index": self.name, "_id": doc_id}}, ensure_ascii=False))
+            bulk_lines.append(json.dumps(payload, ensure_ascii=False))
+
+        body = "\n".join(bulk_lines) + "\n"
+        resp = self._client.post(
+            f"{self.base_url}/_bulk",
+            content=body.encode("utf-8"),
+            params={"refresh": "wait_for"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("errors"):
+            raise RuntimeError(f"Elasticsearch bulk write failed: {data}")
+
+    def query(
+        self,
+        query_texts: list[str] | None = None,
+        query_embeddings: list[list[float]] | None = None,
+        n_results: int = 5,
+        where: dict | None = None,
+        include: list[str] | None = None,
+    ) -> dict:
+        """检索相关文档。"""
+        query_vector = query_embeddings[0] if query_embeddings and query_embeddings[0] else None
+        filter_query = self._build_filter(where)
+
+        if query_vector:
+            inner_query: dict[str, Any] = {"match_all": {}}
+            if filter_query:
+                inner_query = {"bool": {"filter": filter_query}}
+            body = {
+                "size": n_results,
+                "query": {
+                    "script_score": {
+                        "query": inner_query,
+                        "script": {
+                            "source": "cosineSimilarity(params.query_vector, 'embedding') + 1.0",
+                            "params": {"query_vector": query_vector},
+                        },
+                    }
+                },
+                "_source": ["content", "metadata", "embedding", "session_id", "type", "topic", "preference_type", "timestamp", "destination"],
+            }
+        else:
+            must_clause = []
+            if query_texts and query_texts[0]:
+                must_clause.append({"match": {"content": query_texts[0]}})
+            body = {
+                "size": n_results,
+                "query": {
+                    "bool": {
+                        "must": must_clause or [{"match_all": {}}],
+                        "filter": filter_query or [],
+                    }
+                },
+                "_source": ["content", "metadata", "embedding", "session_id", "type", "topic", "preference_type", "timestamp", "destination"],
+            }
+
+        resp = self._client.post(f"{self._index_url()}/_search", json=body)
+        resp.raise_for_status()
+        hits = resp.json().get("hits", {}).get("hits", [])
+
+        documents: list[str] = []
+        metadatas: list[dict] = []
+        distances: list[float] = []
+        for hit in hits:
+            source = hit.get("_source", {})
+            documents.append(source.get("content", ""))
+            metadatas.append(source.get("metadata", {}) or {})
+            score = float(hit.get("_score") or 0.0)
+            if query_vector:
+                distances.append(max(0.0, 2.0 - score))
+            else:
+                distances.append(1.0 / (score + 1.0))
+
+        return {"documents": [documents], "metadatas": [metadatas], "distances": [distances]}
+
+    def count(self) -> int:
+        """返回索引文档数。"""
+        resp = self._client.get(f"{self._index_url()}/_count")
+        resp.raise_for_status()
+        return int(resp.json().get("count", 0))
+
+    def delete(self) -> None:
+        """删除索引。"""
+        resp = self._client.delete(self._index_url())
+        if resp.status_code not in (200, 404):
+            resp.raise_for_status()
+
+    def _build_filter(self, where: dict | None) -> list[dict]:
+        """把简单 where 条件翻译成 Elasticsearch filter。"""
+        if not where:
+            return []
+
+        filters: list[dict] = []
+        for key, value in where.items():
+            if key == "$and" and isinstance(value, list):
+                nested = [self._build_filter(item) for item in value]
+                filters.append({"bool": {"must": [f for group in nested for f in group]}})
+                continue
+            if key == "$or" and isinstance(value, list):
+                nested = [self._build_filter(item) for item in value]
+                should_filters = [{"bool": {"filter": group}} for group in nested if group]
+                if should_filters:
+                    filters.append({"bool": {"should": should_filters, "minimum_should_match": 1}})
+                continue
+
+            if isinstance(value, (list, tuple, set)):
+                filters.append({"terms": {key: list(value)}})
+            else:
+                filters.append({"term": {key: value}})
+        return filters
+
+
+class _ElasticsearchClient:
+    """Elasticsearch 客户端包装器。"""
+
+    def __init__(
+        self,
+        base_url: str,
+        vector_dims: int = 384,
+        username: str = "",
+        password: str = "",
+        index_prefix: str = "travel_memory",
+    ):
+        self.base_url = base_url.rstrip("/")
+        self.vector_dims = vector_dims
+        self.username = username
+        self.password = password
+        self.index_prefix = index_prefix
+        self._collections: dict[str, _ElasticsearchCollection] = {}
+
+    def get_or_create_collection(self, name: str, metadata: dict | None = None):
+        if name not in self._collections:
+            self._collections[name] = _ElasticsearchCollection(
+                index_name=name,
+                base_url=self.base_url,
+                vector_dims=self.vector_dims,
+                username=self.username,
+                password=self.password,
+                metadata=metadata,
+            )
+        return self._collections[name]
+
+    def delete_collection(self, name: str) -> None:
+        if name in self._collections:
+            self._collections[name].delete()
+            del self._collections[name]
+
+
 class EmbeddingProvider:
     """Embedding提供者接口
 
@@ -307,48 +564,62 @@ class LongTermMemory:
         preference_collection: 用户偏好集合
     """
 
-    def __init__(self, collection_name: str = "travel_memory",
-                 persist_dir: str = "./data/chroma_db",
-                 embedding_provider: str = "hash"):
-        """初始化长期记忆
-
-        Args:
-            collection_name: 主集合名称前缀
-            persist_dir: ChromaDB持久化目录
-            embedding_provider: embedding提供者 (openai/sentence-transformers/hash)
-        """
+    def __init__(
+        self,
+        collection_name: str = "travel_memory",
+        persist_dir: str = "./data/chroma_db",
+        embedding_provider: str = "hash",
+        backend: str = "chromadb",
+        elasticsearch_url: str = "http://127.0.0.1:9200",
+        elasticsearch_username: str = "",
+        elasticsearch_password: str = "",
+        elasticsearch_index_prefix: str = "travel_memory",
+        elasticsearch_vector_dims: int = 384,
+    ):
+        """????????"""
         self.collection_name = collection_name
         self.persist_dir = persist_dir
-        self._use_chromadb = CHROMADB_AVAILABLE
+        self.backend = backend if backend in {"chromadb", "elasticsearch"} else "chromadb"
+        self.elasticsearch_index_prefix = elasticsearch_index_prefix
+        self.elasticsearch_vector_dims = elasticsearch_vector_dims
+        self._use_chromadb = CHROMADB_AVAILABLE and self.backend == "chromadb"
 
-        # 初始化Embedding提供者
+        # ??? Embedding ???
         self.embedder = EmbeddingProvider(provider=embedding_provider)
 
-        # 初始化客户端（ChromaDB或内存降级）
-        if self._use_chromadb:
+        # ????????????????
+        if self.backend == "elasticsearch":
+            self.client = _ElasticsearchClient(
+                base_url=elasticsearch_url,
+                vector_dims=elasticsearch_vector_dims,
+                username=elasticsearch_username,
+                password=elasticsearch_password,
+                index_prefix=elasticsearch_index_prefix,
+            )
+        elif self._use_chromadb:
             self.client = chromadb.PersistentClient(
                 path=persist_dir,
                 settings=Settings(
                     anonymized_telemetry=False,
-                    allow_reset=True
-                )
+                    allow_reset=True,
+                ),
             )
         else:
-            # 使用内存降级方案
+            # ????????
             self.client = _InMemoryClient(persist_dir=persist_dir)
 
-        # 三个独立的集合
+        # ??????
         self.episodic_collection = self.client.get_or_create_collection(
             name=f"{collection_name}_episodic",
-            metadata={"description": "历史旅行交互事件"}
+            metadata={"description": "????????"},
         )
         self.semantic_collection = self.client.get_or_create_collection(
             name=f"{collection_name}_semantic",
-            metadata={"description": "旅行知识和目的地信息"}
+            metadata={"description": "??????????"},
         )
         self.preference_collection = self.client.get_or_create_collection(
             name=f"{collection_name}_preferences",
-            metadata={"description": "用户偏好历史"}
+            metadata={"description": "??????"},
         )
 
     # ========== Episodic Memory（情节记忆） ==========
@@ -715,12 +986,12 @@ class LongTermMemory:
         self.preference_collection.add(
             ids=[pref_id],
             documents=[document],
-            metadatas={
+            metadatas=[{
                 "session_id": session_id,
                 "preference_type": preference_type,
                 "type": "preference",
                 "timestamp": time.time()
-            }
+            }]
         )
 
         return pref_id

@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 import time
 from datetime import datetime
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, TypedDict
 
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
@@ -37,13 +37,28 @@ from models.schemas import (
 
 
 # ==================== 状态定义 ====================
+#
+# 重要：这里必须用 TypedDict，不能用普通 dict 子类。
+#
+# 之前 TravelState 是 `class TravelState(dict)`，没有任何类型注解字段。
+# LangGraph 的 StateGraph(schema) 需要从 schema 里反射出所有字段名才能
+# 正确地在节点之间做 state 合并——每个节点函数返回的 dict 只包含它自己
+# 改动的键，LangGraph 会拿这个返回值跟 schema 声明的字段做 merge，
+# 没在 schema 里声明的字段不会被识别、也不会被保留传递到下一个节点。
+#
+# 用普通 dict 子类时，LangGraph 反射不出任何字段（dict 子类没有类型注解），
+# 导致除了节点自己刚写的那个键，其余字段（包括 messages）在传到下一个
+# 节点时全部丢失，实测复现为：
+#   KeyError: 'messages'（在 chitchat_responder 里 state["messages"].append(...)）
+# 换成 TypedDict 之后，LangGraph 能读到完整字段列表，合并行为才正确。
 
-class TravelState(dict):
+
+class TravelState(TypedDict, total=False):
     """
     LangGraph TravelState - 核心状态定义
 
-    使用 dict 子类实现，兼容 LangGraph 的 StateGraph 要求。
-    包含完整的旅行规划过程中的所有状态字段。
+    total=False 表示所有字段都是可选的（节点函数可以只返回部分字段），
+    这跟原来 dict 子类的使用方式保持一致。
 
     Attributes:
         messages: 对话历史
@@ -67,52 +82,215 @@ class TravelState(dict):
         tool_calls: 工具调用记录
         needs_clarification: 是否需要澄清
         safety_approved: 安全审查是否通过
+        user_intent: 意图路由结果 (new_plan | continue_clarify | faq_about_itinerary | chitchat)
+        qa_response: 针对已有行程的问答回复
+        chitchat_response: 闲聊回复
     """
 
-    @classmethod
-    def create(
-        cls,
-        session_id: str,
-        user_input: str = "",
-        messages: list | None = None,
-    ) -> "TravelState":
-        """
-        创建新的初始状态
+    messages: list
+    user_input: str
+    preference: dict | None
+    constraints: dict | None
+    missing_fields: list
+    poi_list: list
+    route: list
+    weather: list
+    budget: list | dict | None
+    total_budget_estimate: dict | None
+    current_node: str
+    next_node: str | None
+    iteration_count: int
+    itinerary: str
+    confirmation_required: list
+    risk_alerts: list
+    session_id: str
+    trace_id: str | None
+    tool_calls: list
+    needs_clarification: bool
+    safety_approved: bool
+    user_intent: str | None
+    qa_response: str | None
+    chitchat_response: str | None
 
-        Args:
-            session_id: 会话 ID
-            user_input: 用户初始输入
-            messages: 初始对话历史
 
-        Returns:
-            TravelState: 初始状态实例
-        """
-        return cls({
-            "messages": messages or [],
-            "user_input": user_input,
-            "preference": None,
-            "constraints": None,
-            "missing_fields": [],
-            "poi_list": [],
-            "route": [],
-            "weather": [],
-            "budget": None,
-            "total_budget_estimate": None,
-            "current_node": "START",
-            "next_node": None,
-            "iteration_count": 0,
-            "itinerary": "",
-            "confirmation_required": [],
-            "risk_alerts": [],
-            "session_id": session_id,
-            "trace_id": None,
-            "tool_calls": [],
-            "needs_clarification": False,
-            "safety_approved": False,
-        })
+def create_initial_state(
+    session_id: str,
+    user_input: str = "",
+    messages: list | None = None,
+) -> TravelState:
+    """
+    创建新的初始状态
+
+    原来是 TravelState.create(...) 这个 classmethod，因为 TravelState 现在
+    是 TypedDict（不支持 classmethod），改成模块级函数。
+
+    Args:
+        session_id: 会话 ID
+        user_input: 用户初始输入
+        messages: 初始对话历史
+
+    Returns:
+        TravelState: 初始状态字典
+    """
+    return TravelState(
+        messages=messages or [],
+        user_input=user_input,
+        preference=None,
+        constraints=None,
+        missing_fields=[],
+        poi_list=[],
+        route=[],
+        weather=[],
+        budget=None,
+        total_budget_estimate=None,
+        current_node="START",
+        next_node=None,
+        iteration_count=0,
+        itinerary="",
+        confirmation_required=[],
+        risk_alerts=[],
+        session_id=session_id,
+        trace_id=None,
+        tool_calls=[],
+        needs_clarification=False,
+        safety_approved=False,
+        user_intent=None,
+        qa_response=None,
+        chitchat_response=None,
+    )
 
 
 # ==================== 节点函数 ====================
+
+async def intent_router(state: TravelState) -> TravelState:
+    """
+    意图路由节点
+
+    用 LLM 判断用户这句话属于哪种场景，决定图接下来走哪条分支：
+    - new_plan: 新的旅行规划需求
+    - continue_clarify: 系统上一轮在追问缺失字段，用户在补充信息
+    - faq_about_itinerary: 针对已生成行程的提问（不重新跑完整规划流程）
+    - chitchat: 跟旅行规划无关的闲聊
+
+    LLM 调用失败或超时时，降级到启发式规则，不会卡死整个流程。
+
+    Args:
+        state: 当前状态
+
+    Returns:
+        更新后的状态，state["user_intent"] 被设置
+    """
+    from agent.tools import classify_intent
+
+    user_input = state.get("user_input", "")
+    has_existing_itinerary = bool(state.get("itinerary"))
+    needs_clarification = bool(state.get("needs_clarification"))
+
+    try:
+        result = await classify_intent.ainvoke({
+            "user_input": user_input,
+            "has_existing_itinerary": has_existing_itinerary,
+            "needs_clarification": needs_clarification,
+        })
+        if isinstance(result, str):
+            result = json.loads(result)
+        intent = result.get("intent")
+        if intent not in ("new_plan", "continue_clarify", "faq_about_itinerary", "chitchat"):
+            raise ValueError(f"LLM 返回了未知意图: {intent!r}")
+    except Exception as exc:
+        # 降级到启发式规则，保证流程不中断
+        if needs_clarification:
+            intent = "continue_clarify"
+        elif has_existing_itinerary and any(kw in user_input for kw in ("吗", "呢", "怎么", "如何", "为什么", "？", "?")):
+            intent = "faq_about_itinerary"
+        elif any(kw in user_input for kw in ("去", "想去", "规划", "旅游", "旅行", "出游")):
+            intent = "new_plan"
+        else:
+            intent = "chitchat"
+        state["risk_alerts"].append(f"意图分类降级为启发式规则: {intent}（原因: {exc}）")
+
+    state["user_intent"] = intent
+    state["current_node"] = "intent_router"
+    return state
+
+
+async def qa_responder(state: TravelState) -> TravelState:
+    """
+    行程问答节点
+
+    用户针对已生成的行程提问（比如"第二天几点出发"），直接基于现有
+    itinerary/weather/budget 数据回答，不重新跑完整规划流程。
+
+    Args:
+        state: 当前状态
+
+    Returns:
+        更新后的状态，答案写入 state["qa_response"] 并追加到 messages
+    """
+    from agent.tools import answer_itinerary_question
+
+    user_input = state.get("user_input", "")
+    itinerary = state.get("itinerary", "") or ""
+    weather = state.get("weather") or []
+    total_budget = state.get("total_budget_estimate") or {}
+
+    weather_summary = "；".join(
+        f"{w.get('date', '')} {w.get('description', '')} "
+        f"{w.get('temperature_min', '')}~{w.get('temperature_max', '')}°C"
+        for w in weather[:7]
+    ) or "暂无天气数据"
+    budget_summary = f"预估 {total_budget.get('min', 0)}~{total_budget.get('max', 0)} 元" if total_budget else "暂无预算数据"
+
+    try:
+        answer = await answer_itinerary_question.ainvoke({
+            "question": user_input,
+            "itinerary": itinerary,
+            "weather_summary": weather_summary,
+            "budget_summary": budget_summary,
+        })
+    except Exception as exc:
+        answer = f"抱歉，暂时无法回答这个问题，请查看上方完整行程。（{exc}）"
+
+    state["qa_response"] = answer
+    state["messages"].append({
+        "role": "assistant",
+        "content": answer,
+        "node": "qa_responder",
+    })
+    state["current_node"] = "qa_responder"
+    return state
+
+
+async def chitchat_responder(state: TravelState) -> TravelState:
+    """
+    闲聊响应节点
+
+    处理跟旅行规划无关的对话，不触发规划流程。
+
+    Args:
+        state: 当前状态
+
+    Returns:
+        更新后的状态，回复写入 state["chitchat_response"] 并追加到 messages
+    """
+    from agent.tools import generate_chitchat_reply
+
+    user_input = state.get("user_input", "")
+
+    try:
+        reply = await generate_chitchat_reply.ainvoke({"message": user_input})
+    except Exception:
+        reply = "很高兴和您聊天。有什么旅行规划需要帮助的吗？"
+
+    state["chitchat_response"] = reply
+    state["messages"].append({
+        "role": "assistant",
+        "content": reply,
+        "node": "chitchat_responder",
+    })
+    state["current_node"] = "chitchat_responder"
+    return state
+
 
 async def preference_collector(state: TravelState) -> TravelState:
     """
@@ -133,8 +311,8 @@ async def preference_collector(state: TravelState) -> TravelState:
     user_input = state.get("user_input", "")
     current_pref = state.get("preference") or {}
 
-    # 调用偏好收集工具
-    result = collect_preferences.invoke({
+    # 调用偏好收集工具（现在内部优先走 LLM 提取，失败降级到正则）
+    result = await collect_preferences.ainvoke({
         "user_input": user_input,
         "current_preferences": current_pref if isinstance(current_pref, dict) else {},
     })
@@ -324,6 +502,23 @@ async def destination_search(state: TravelState) -> TravelState:
 
     all_pois: list[dict] = []
     seen_names: set[str] = set()
+    seen_parents: set[str] = set()
+
+    def _parent_key(poi_name: str) -> str:
+        """提取"母地点"标识，用于同园区/同景区子点位去重。
+
+        高德等地图服务会把大公园/景区内的长椅、小径、亭子等标记成
+        独立 POI（如"人民公园-相亲角"、"人民公园-西山瀑布"），如果只按
+        完整名称去重，一个热门大公园的十几个子点位会挤占整个行程，
+        把其他真正该出现的知名景点挤掉。这里按常见分隔符取前缀，
+        同一母地点只保留第一个命中的子点位。
+        """
+        for sep in ("-", "·", "（", "(", " "):
+            if sep in poi_name:
+                prefix = poi_name.split(sep, 1)[0].strip()
+                if prefix:
+                    return prefix
+        return poi_name
 
     # 总是搜索 interesting_places 作为基础
     search_kinds = set()
@@ -348,9 +543,14 @@ async def destination_search(state: TravelState) -> TravelState:
 
             for p in places or []:
                 name = p.get("name", "")
-                if name and name not in seen_names:
-                    seen_names.add(name)
-                    all_pois.append(p)
+                if not name or name in seen_names:
+                    continue
+                parent = _parent_key(name)
+                if parent in seen_parents:
+                    continue
+                seen_names.add(name)
+                seen_parents.add(parent)
+                all_pois.append(p)
         except Exception as e:
             state["risk_alerts"].append(f"搜索 {kind} 失败: {str(e)}")
             continue
@@ -455,6 +655,8 @@ async def route_planner(state: TravelState) -> TravelState:
             "duration_seconds": route_data.get("duration", 0),
             "transportation_mode": profile,
             "source": route_data.get("source", "OSRM"),
+            # 实际道路坐标点 [[lon, lat], ...]，前端画线用这个而不是两个 POI 直连
+            "polyline": route_data.get("polyline") or [],
         }
         route_segments.append(segment)
 
@@ -658,6 +860,26 @@ async def itinerary_synthesizer(state: TravelState) -> TravelState:
         "friends": "朋友", "group": "团队",
     }.get(companions, "")
 
+    # POI/工具内部分类值 -> 中文展示文案，避免把 interesting_places 这类
+    # 英文原始标识直接暴露给用户
+    category_label_map = {
+        "interesting_places": "热门景点",
+        "museums": "博物馆",
+        "historic": "历史古迹",
+        "cultural": "文化景点",
+        "natural": "自然风光",
+        "parks": "公园",
+        "foods": "美食",
+        "shops": "购物",
+        "religion": "宗教场所",
+        "architecture": "建筑",
+        "theatres_and_entertainments": "娱乐场所",
+        "science_museums": "科技馆",
+    }
+
+    def _category_label(raw: str) -> str:
+        return category_label_map.get(raw, raw if raw else "热门景点")
+
     # 构建行程 Markdown
     lines = [
         f"# {destination} {duration}天{companions_text}旅行计划",
@@ -667,18 +889,12 @@ async def itinerary_synthesizer(state: TravelState) -> TravelState:
         "",
     ]
 
-    # 行程总览
-    lines.extend([
-        "## 行程总览",
-        "| 日期 | 主题 | 主要活动 |",
-        "|:-----|:-----|:---------|",
-    ])
-
-    # 每日安排
-    lines.extend(["", "## 每日详细计划", ""])
-
-    # 将 POI 分配到每一天
+    # 每日安排（先算出每天的数据，用于填充行程总览表格和详细计划两处）
     pois_per_day = max(2, min(4, len(poi_list) // duration if duration > 0 else 3))
+    time_slots = [("09:00", "11:00"), ("11:30", "13:00"), ("14:00", "16:00"), ("16:30", "17:30"), ("18:00", "19:30")]
+
+    day_summaries: list[dict[str, str]] = []
+    daily_sections: list[str] = []
 
     for day in range(1, duration + 1):
         day_weather = weather[day - 1] if day - 1 < len(weather) else None
@@ -692,34 +908,69 @@ async def itinerary_synthesizer(state: TravelState) -> TravelState:
         day_pois = poi_list[start_idx:end_idx]
 
         # 主题
-        themes = [p.get("category", "景点") for p in day_pois[:2]]
-        theme = "/".join(set(themes)) if themes else "自由探索"
+        themes = [_category_label(p.get("category", "")) for p in day_pois[:2]]
+        theme = "/".join(dict.fromkeys(themes)) if themes else "自由探索"
 
-        lines.append(f"### Day {day}（{date_str}）")
-        lines.append(f"**主题**: {theme}")
-        lines.append(f"**天气**: {weather_desc} {temp_range}")
-        lines.append("")
+        section_lines = [
+            f"### Day {day}（{date_str}）",
+            f"**主题**: {theme}",
+            f"**天气**: {weather_desc} {temp_range}",
+            "",
+        ]
 
-        # 时间安排
-        time_slots = [("09:00", "11:00"), ("11:30", "12:30"), ("14:00", "16:00"), ("16:30", "17:30"), ("18:00", "19:30")]
-        activities = []
+        # 时间安排：先排定景点时段，用餐固定插在对应时段之间，
+        # 避免用餐时段与景点时段重叠。
+        visit_slots = [time_slots[0], time_slots[2], time_slots[3]]  # 上午/下午两段/傍晚
+        activities: list[str] = []
+        poi_names_for_summary: list[str] = []
 
-        for i, poi in enumerate(day_pois):
-            if i < len(time_slots):
-                start, end = time_slots[i]
-                activities.append(f"- {start}-{end}: **{poi.get('name', '景点')}** - [推荐原因: {poi.get('category', '热门景点')}]")
+        for i, poi in enumerate(day_pois[:len(visit_slots)]):
+            start, end = visit_slots[i]
+            poi_name = poi.get("name", "景点")
+            poi_names_for_summary.append(poi_name)
+            activities.append(f"- {start}-{end}: **{poi_name}** - [推荐: {_category_label(poi.get('category', ''))}]")
 
-        # 添加用餐
-        if len(activities) >= 2:
-            activities.insert(1, f"- 12:00-13:00: **午餐** - [品尝当地美食]")
-        if len(activities) >= 4:
-            activities.append(f"- 19:30-20:30: **晚餐** - [推荐当地特色餐厅]")
+        # 按时间顺序插入用餐（不与景点时段重叠）
+        if activities:
+            activities.insert(1 if len(activities) > 1 else len(activities), "- 12:00-13:30: **午餐** - [品尝当地美食]")
+        # pois_per_day 上限为 4、visit_slots 只占 3 段，最多还剩 1 个 POI，
+        # 安排在傍晚时段（不与其他时段重叠）
+        extra_pois = day_pois[len(visit_slots):]
+        for extra_poi in extra_pois:
+            extra_name = extra_poi.get("name", "景点")
+            poi_names_for_summary.append(extra_name)
+            activities.append(f"- 16:30-17:30: **{extra_name}** - [推荐: {_category_label(extra_poi.get('category', ''))}]")
+        activities.append("- 19:00-20:00: **晚餐** - [推荐当地特色餐厅]")
 
-        if not activities:
-            activities.append("- 自由安排时间，建议探索当地特色街区和美食")
+        if not day_pois:
+            activities = ["- 自由安排时间，建议探索当地特色街区和美食"]
+            poi_names_for_summary = []
 
-        lines.extend(activities)
-        lines.append("")
+        section_lines.extend(activities)
+        section_lines.append("")
+        daily_sections.append("\n".join(section_lines))
+
+        day_summaries.append({
+            "date": date_str,
+            "theme": theme,
+            "activities": "、".join(poi_names_for_summary) if poi_names_for_summary else "自由探索",
+        })
+
+    # 行程总览（用上面算好的 day_summaries 填充表格，而不是留空表头）
+    lines.extend([
+        "## 行程总览",
+        "| 日期 | 主题 | 主要活动 |",
+        "|:-----|:-----|:---------|",
+    ])
+    for summary in day_summaries:
+        lines.append(f"| {summary['date']} | {summary['theme']} | {summary['activities']} |")
+    lines.append("")
+
+    # 每日详细计划
+    lines.append("## 每日详细计划")
+    lines.append("")
+    for section in daily_sections:
+        lines.append(section)
 
     # 预算拆分
     lines.extend([
@@ -742,15 +993,31 @@ async def itinerary_synthesizer(state: TravelState) -> TravelState:
     lines.append(f"| **合计** | **{total_min:.0f} ~ {total_max:.0f}** | |")
     lines.append("")
 
-    # 数据来源说明
+    # 数据来源说明：按各字段实际返回的 source 动态生成，而不是写死一套
+    # OpenTripMap/OSRM/Open-Meteo（那套只是降级兜底方案，实际大多数请求
+    # 会先走高德 MCP，写死会导致声明和真实数据来源不一致）。
+    def _collect_sources(items: list[dict], key: str = "source") -> list[str]:
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for item in items:
+            src = item.get(key) if isinstance(item, dict) else None
+            if src and src not in seen:
+                seen.add(src)
+                ordered.append(src)
+        return ordered
+
+    poi_sources = _collect_sources(poi_list if isinstance(poi_list, list) else [])
+    weather_sources = _collect_sources(weather if isinstance(weather, list) else [])
+    route_sources = _collect_sources(route if isinstance(route, list) else [])
+    budget_sources = _collect_sources(budget_items)
+
     lines.extend([
         "## 数据来源说明",
         "",
-        "- 景点信息: OpenTripMap API",
-        "- 坐标数据: Nominatim (OpenStreetMap)",
-        "- 路线规划: OSRM (Open Source Routing Machine)",
-        "- 天气预报: Open-Meteo",
-        "- 预算估算: 基于历史数据和规则估算",
+        f"- 景点信息: {', '.join(poi_sources) if poi_sources else '暂无数据'}",
+        f"- 路线规划: {', '.join(route_sources) if route_sources else '暂无数据'}",
+        f"- 天气预报: {', '.join(weather_sources) if weather_sources else '暂无数据'}",
+        f"- 预算估算: {', '.join(budget_sources) if budget_sources else '基于历史数据和规则估算'}",
         "",
     ])
 
@@ -780,10 +1047,12 @@ async def itinerary_synthesizer(state: TravelState) -> TravelState:
     state["itinerary"] = itinerary_md
     state["current_node"] = "itinerary_synthesizer"
 
-    # 添加助手消息
+    # 添加助手消息（完整行程，不做截断——这条会被存进会话历史，
+    # 之后切换/重新打开会话时前端从这里恢复展示内容，截断会导致
+    # 历史记录里的行程显示不全，看起来像是"输出被截断了"）
     state["messages"].append({
         "role": "assistant",
-        "content": f"行程规划完成！\n\n{itinerary_md[:500]}...",
+        "content": itinerary_md,
         "node": "itinerary_synthesizer",
     })
 
@@ -938,19 +1207,28 @@ def safety_check(state: TravelState) -> str:
 
 # ==================== 构建图 ====================
 
-def build_travel_graph() -> StateGraph:
+def build_travel_graph(checkpointer: Any = None) -> Any:
     """
     构建 LangGraph 旅行规划状态机
 
-    定义完整的节点和边关系，包括条件分支。
+    定义完整的节点和边关系，包括条件分支。入口是 intent_router，
+    根据意图分类结果路由到四条分支：新规划/继续澄清/行程问答/闲聊。
+
+    Args:
+        checkpointer: LangGraph checkpointer 实例（如 AsyncPostgresSaver），
+            传入后图执行状态会持久化，支持断点续传。不传则不启用持久化
+            （比如单测场景）。
 
     Returns:
-        StateGraph: 编译后的状态图
+        编译后的状态图（CompiledStateGraph）
     """
     # 初始化图
     workflow = StateGraph(TravelState)
 
     # 注册所有节点
+    workflow.add_node("intent_router", intent_router)
+    workflow.add_node("qa_responder", qa_responder)
+    workflow.add_node("chitchat_responder", chitchat_responder)
     workflow.add_node("preference_collector", preference_collector)
     workflow.add_node("constraint_normalizer", constraint_normalizer)
     workflow.add_node("destination_search", destination_search)
@@ -961,10 +1239,22 @@ def build_travel_graph() -> StateGraph:
     workflow.add_node("safety_reviewer", safety_reviewer)
     workflow.add_node("output_formatter", output_formatter)
 
-    # 设置入口点
-    workflow.set_entry_point("preference_collector")
+    # 设置入口点：先经过意图路由
+    workflow.set_entry_point("intent_router")
 
-    # preference_collector -> 条件分支
+    # intent_router -> 按意图分流
+    workflow.add_conditional_edges(
+        "intent_router",
+        lambda state: state.get("user_intent") or "new_plan",
+        {
+            "new_plan": "preference_collector",
+            "continue_clarify": "preference_collector",
+            "faq_about_itinerary": "qa_responder",
+            "chitchat": "chitchat_responder",
+        },
+    )
+
+    # preference_collector -> 条件分支（原有逻辑不变）
     workflow.add_conditional_edges(
         "preference_collector",
         should_clarify,
@@ -989,11 +1279,9 @@ def build_travel_graph() -> StateGraph:
         {"format": "output_formatter"},
     )
 
-    # 输出格式化 -> 结束
+    # 输出格式化 / 行程问答 / 闲聊 -> 结束
     workflow.add_edge("output_formatter", END)
+    workflow.add_edge("qa_responder", END)
+    workflow.add_edge("chitchat_responder", END)
 
-    return workflow.compile()
-
-
-# 全局图实例（单例）
-travel_graph = build_travel_graph()
+    return workflow.compile(checkpointer=checkpointer)

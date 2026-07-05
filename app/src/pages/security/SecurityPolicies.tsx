@@ -17,6 +17,11 @@ import {
 } from '@/components/ui/accordion';
 import { securityPolicies } from './data';
 
+const statusLabels: Record<'active' | 'inactive', string> = {
+  active: '活跃',
+  inactive: '已禁用',
+};
+
 const policyIcons = [
   ShieldCheck,
   KeyRound,
@@ -46,10 +51,10 @@ export default function SecurityPolicies() {
             fontFamily: "'Outfit Variable', Outfit, sans-serif",
           }}
         >
-          Security Policies
+          安全策略
         </h2>
         <p className="text-base mt-2" style={{ color: 'rgba(255,255,255,0.5)' }}>
-          Active governance policies protecting your AI travel agent
+          保护您的 AI 旅行代理的活跃治理策略
         </p>
       </div>
 
@@ -114,7 +119,7 @@ export default function SecurityPolicies() {
                           ) : (
                             <XCircle className="w-3 h-3" />
                           )}
-                          {policy.status}
+                          {statusLabels[policy.status]}
                         </span>
                       </div>
                     </div>
@@ -132,7 +137,7 @@ export default function SecurityPolicies() {
                       className="text-xs font-mono mt-3"
                       style={{ color: 'rgba(255,255,255,0.3)' }}
                     >
-                      Last updated: {policy.lastUpdated}
+                      最后更新: {policy.lastUpdated}
                     </p>
                   </div>
                 </AccordionContent>

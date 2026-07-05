@@ -16,16 +16,16 @@ type RightTab = 'metrics' | 'tools' | 'memory' | 'safety';
 type BottomTab = 'log' | 'stream';
 
 const centerTabs: { id: CenterTab; label: string; icon: React.ElementType }[] = [
-  { id: 'map', label: 'Map', icon: Map },
-  { id: 'timeline', label: 'Timeline', icon: Clock },
-  { id: 'calendar', label: 'Calendar', icon: Calendar },
+  { id: 'map', label: '地图', icon: Map },
+  { id: 'timeline', label: '时间线', icon: Clock },
+  { id: 'calendar', label: '日历', icon: Calendar },
 ];
 
 const rightTabs: { id: RightTab; label: string; icon: React.ElementType }[] = [
-  { id: 'metrics', label: 'Metrics', icon: BarChart3 },
-  { id: 'tools', label: 'Tools', icon: Terminal },
-  { id: 'memory', label: 'Memory', icon: Brain },
-  { id: 'safety', label: 'Safety', icon: Shield },
+  { id: 'metrics', label: '指标', icon: BarChart3 },
+  { id: 'tools', label: '工具', icon: Terminal },
+  { id: 'memory', label: '记忆', icon: Brain },
+  { id: 'safety', label: '安全', icon: Shield },
 ];
 
 export default function AppDashboard() {
@@ -60,6 +60,12 @@ export default function AppDashboard() {
     API: '#2EC4B6',
     CALC: '#FF9F1C',
     SAFETY: '#E29578',
+  };
+  const categoryLabels: Record<string, string> = {
+    DB: '数据库',
+    API: '接口',
+    CALC: '计算',
+    SAFETY: '安全',
   };
 
   return (
@@ -206,7 +212,7 @@ export default function AppDashboard() {
                   }}
                 >
                   <Activity className="w-3 h-3" />
-                  Live Log
+                  实时日志
                 </button>
                 <button
                   onClick={() => setBottomTab('stream')}
@@ -217,7 +223,7 @@ export default function AppDashboard() {
                   }}
                 >
                   <Brain className="w-3 h-3" />
-                  Memory Stream
+                  记忆流
                 </button>
               </>
             )}
@@ -229,12 +235,12 @@ export default function AppDashboard() {
           >
             {bottomOpen ? (
               <>
-                <span className="text-[10px]">Collapse</span>
+                <span className="text-[10px]">收起</span>
                 <ChevronDown className="w-3.5 h-3.5" />
               </>
             ) : (
               <>
-                <span className="text-[10px]">Live Tool Calls</span>
+                <span className="text-[10px]">实时工具调用</span>
                 <ChevronUp className="w-3.5 h-3.5" />
               </>
             )}
@@ -265,7 +271,7 @@ export default function AppDashboard() {
                         fontFamily: "'JetBrains Mono Variable', monospace",
                       }}
                     >
-                      [{log.category}]
+                      [{categoryLabels[log.category] || log.category}]
                     </span>
                     <span style={{ color: '#2EC4B6', fontFamily: "'JetBrains Mono Variable', monospace" }}>
                       {log.function}
@@ -288,7 +294,7 @@ export default function AppDashboard() {
                   {/* Memory Stream Visualization */}
                   <div className="flex flex-col items-center gap-2">
                     <div className="w-32 h-10 rounded-lg flex items-center justify-center text-xs text-white" style={{ background: '#1A659E' }}>
-                      Query
+                      查询
                     </div>
                     <div className="w-0.5 h-8" style={{ background: 'linear-gradient(180deg, #1A659E, #2EC4B6)' }} />
                     <motion.div
@@ -298,23 +304,23 @@ export default function AppDashboard() {
                       style={{ background: '#2EC4B6' }}
                     >
                       <Sparkles className="w-3 h-3 mr-1.5" />
-                      Retrieval
+                      检索
                     </motion.div>
                     <div className="w-0.5 h-8" style={{ background: 'linear-gradient(180deg, #2EC4B6, #06D6A0)' }} />
                     <div className="w-32 h-10 rounded-lg flex items-center justify-center text-xs text-white" style={{ background: '#06D6A0' }}>
-                      Results
+                      结果
                     </div>
                   </div>
 
-                  {/* Retrieved Memories */}
+                  {/* 检索到的记忆 */}
                   <div className="space-y-2">
                     <p className="text-[10px] uppercase tracking-wider mb-2" style={{ color: 'rgba(255,255,255,0.4)', fontFamily: "'JetBrains Mono Variable', monospace" }}>
-                      Retrieved Memories
+                      检索到的记忆
                     </p>
                     {[
-                      { label: 'Boutique hotel preference', score: 92 },
-                      { label: 'Early morning photography', score: 88 },
-                      { label: 'Vegetarian dining', score: 72 },
+                      { label: '精品酒店偏好', score: 92 },
+                      { label: '早晨摄影', score: 88 },
+                      { label: '素食饮食', score: 72 },
                     ].map((item, i) => (
                       <motion.div
                         key={item.label}

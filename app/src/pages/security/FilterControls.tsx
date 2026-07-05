@@ -1,5 +1,6 @@
 import { Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
+import { severityLabels, statusLabels } from './data';
 
 export type SeverityFilter = 'All' | 'Critical' | 'High' | 'Medium' | 'Low';
 export type StatusFilter = 'All' | 'Pending' | 'Resolved' | 'Dismissed';
@@ -19,9 +20,9 @@ interface FilterControlsProps {
 const severities: SeverityFilter[] = ['All', 'Critical', 'High', 'Medium', 'Low'];
 const statuses: StatusFilter[] = ['All', 'Pending', 'Resolved', 'Dismissed'];
 const dateRanges: { key: DateRange; label: string }[] = [
-  { key: '7days', label: 'Last 7 days' },
-  { key: '30days', label: 'Last 30 days' },
-  { key: 'custom', label: 'Custom' },
+  { key: '7days', label: '过去7天' },
+  { key: '30days', label: '过去30天' },
+  { key: 'custom', label: '自定义' },
 ];
 
 export default function FilterControls({
@@ -46,7 +47,7 @@ export default function FilterControls({
       <div className="relative w-[220px]">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[rgba(255,255,255,0.3)]" />
         <Input
-          placeholder="Search events..."
+          placeholder="搜索事件..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           className="h-9 pl-9 rounded-lg text-sm border-white/[0.08] bg-white/[0.06] text-white placeholder:text-[rgba(255,255,255,0.3)] focus:border-[#219EBC]/50 focus:ring-1 focus:ring-[#219EBC]/30"
@@ -57,7 +58,7 @@ export default function FilterControls({
 
       {/* Severity Filter */}
       <div className="flex items-center gap-1.5">
-        <span className="text-xs text-[rgba(255,255,255,0.3)] mr-1">Severity</span>
+        <span className="text-xs text-[rgba(255,255,255,0.3)] mr-1">严重程度</span>
         {severities.map((s) => (
           <button
             key={s}
@@ -69,7 +70,7 @@ export default function FilterControls({
                 : { background: 'transparent' }
             }
           >
-            {s}
+            {s === 'All' ? '全部' : severityLabels[s]}
           </button>
         ))}
       </div>
@@ -78,7 +79,7 @@ export default function FilterControls({
 
       {/* Status Filter */}
       <div className="flex items-center gap-1.5">
-        <span className="text-xs text-[rgba(255,255,255,0.3)] mr-1">Status</span>
+        <span className="text-xs text-[rgba(255,255,255,0.3)] mr-1">状态</span>
         {statuses.map((s) => (
           <button
             key={s}
@@ -90,7 +91,7 @@ export default function FilterControls({
                 : { background: 'transparent' }
             }
           >
-            {s}
+            {s === 'All' ? '全部' : statusLabels[s]}
           </button>
         ))}
       </div>
@@ -99,7 +100,7 @@ export default function FilterControls({
 
       {/* Date Range */}
       <div className="flex items-center gap-1.5">
-        <span className="text-xs text-[rgba(255,255,255,0.3)] mr-1">Range</span>
+        <span className="text-xs text-[rgba(255,255,255,0.3)] mr-1">范围</span>
         {dateRanges.map((d) => (
           <button
             key={d.key}

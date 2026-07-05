@@ -39,7 +39,7 @@ function CustomTooltip({ active, payload }: CustomTooltipProps) {
         {data.payload.date}
       </p>
       <p className="text-sm font-semibold" style={{ color: '#2EC4B6' }}>
-        Score: {data.value}%
+        分数: {data.value}%
       </p>
     </div>
   );
@@ -71,17 +71,17 @@ export default function ComplianceChart() {
               fontFamily: "'Outfit Variable', Outfit, sans-serif",
             }}
           >
-            Compliance Trend
+            合规趋势
           </h2>
           <p className="text-base mt-2" style={{ color: 'rgba(255,255,255,0.5)' }}>
-            Safety compliance score over the last 30 days
+            过去30天的安全合规分数
           </p>
         </div>
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
             <span className="w-3 h-0.5 rounded-full" style={{ background: '#2EC4B6' }} />
             <span className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>
-              Score
+              分数
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -90,12 +90,12 @@ export default function ComplianceChart() {
               style={{ borderTop: '2px dashed #FFD166', height: 0 }}
             />
             <span className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>
-              Target (80%)
+              目标 (80%)
             </span>
           </div>
           <div className="px-3 py-1.5 rounded-lg" style={{ background: 'rgba(255,255,255,0.05)' }}>
             <span className="text-xs font-mono" style={{ color: '#2EC4B6' }}>
-              Avg: {avgScore}%
+              平均: {avgScore}%
             </span>
           </div>
         </div>
@@ -179,19 +179,19 @@ export default function ComplianceChart() {
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full" style={{ background: '#06D6A0' }} />
             <span className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>
-              Green Zone (90–100%)
+              绿色区域 (90–100%)
             </span>
           </div>
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full" style={{ background: '#FFD166' }} />
             <span className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>
-              Yellow Zone (70–90%)
+              黄色区域 (70–90%)
             </span>
           </div>
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full" style={{ background: '#EF476F' }} />
             <span className="text-xs" style={{ color: 'rgba(255,255,255,0.4)' }}>
-              Red Zone (0–70%)
+              红色区域 (0–70%)
             </span>
           </div>
         </div>

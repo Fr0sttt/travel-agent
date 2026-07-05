@@ -20,6 +20,9 @@ export interface DashboardData {
   safetyEvents: SafetyEvent[];
   toolCallLogs: ToolCallLog[];
   riskAlerts: string[];
+  /** 后端返回的真实道路路径点（按段拼接），[lon, lat] 顺序，取自高德路径规划 polyline。
+   * 为空时前端应退化为 POI 直线连接。 */
+  routePolyline: [number, number][];
 }
 
 function formatTime(date: Date): string {
@@ -358,6 +361,24 @@ export function buildDashboardData(state: SessionState): DashboardData {
     };
   });
 
+  // 真实道路路径：把每段 route 里高德返回的 polyline 坐标依次拼接。
+  // route_planner 按贪心排序生成的每一段都带 polyline（若高德可用），
+  // 拼起来就是整条行程的实际道路轨迹，而不是 POI 两两直连。
+  const routePolyline: [number, number][] = [];
+  route.forEach((segment) => {
+    const seg = segment as Record<string, unknown>;
+    const points = Array.isArray(seg.polyline) ? seg.polyline : [];
+    points.forEach((point) => {
+      if (Array.isArray(point) && point.length === 2) {
+        const lon = Number(point[0]);
+        const lat = Number(point[1]);
+        if (Number.isFinite(lon) && Number.isFinite(lat)) {
+          routePolyline.push([lon, lat]);
+        }
+      }
+    });
+  });
+
   return {
     pois,
     timelineDays,
@@ -368,5 +389,6 @@ export function buildDashboardData(state: SessionState): DashboardData {
     safetyEvents,
     toolCallLogs,
     riskAlerts,
+    routePolyline,
   };
 }

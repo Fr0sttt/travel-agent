@@ -94,10 +94,10 @@ export default function ProfileTab() {
       {/* Header */}
       <motion.div variants={itemVariants}>
         <h2 className="font-display text-[2.5rem] font-semibold text-white leading-tight">
-          Your Profile
+          您的个人资料
         </h2>
         <p className="mt-2 text-base" style={{ color: 'rgba(255,255,255,0.5)' }}>
-          Manage your account information and travel identity
+          管理您的账户信息和旅行身份
         </p>
       </motion.div>
 
@@ -130,14 +130,14 @@ export default function ProfileTab() {
             onClick={() => fileInputRef.current?.click()}
             className="text-sm text-[#8ECAE6] hover:underline transition-all"
           >
-            Change Photo
+            更改照片
           </button>
           {avatarUrl && (
             <button
               onClick={() => setAvatarUrl(null)}
               className="text-sm text-[#EF476F] hover:underline transition-all"
             >
-              Remove
+              删除
             </button>
           )}
         </div>
@@ -147,13 +147,13 @@ export default function ProfileTab() {
       <motion.div variants={itemVariants} className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-5">
         {/* Display Name */}
         <div className="space-y-1.5">
-          <Label className="text-sm font-medium text-[#EDF6F9]">Display Name</Label>
+          <Label className="text-sm font-medium text-[#EDF6F9]">显示名称</Label>
           <div className="relative">
             <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[rgba(255,255,255,0.3)]" />
             <Input
               value={form.displayName}
               onChange={(e) => updateField('displayName', e.target.value)}
-              placeholder="How should we call you?"
+              placeholder="我们应该怎样称呼您？"
               className="h-11 bg-[rgba(255,255,255,0.06)] border-[rgba(255,255,255,0.1)] text-white placeholder:text-[rgba(255,255,255,0.3)] focus:border-[#219EBC] rounded-[8px] pl-10"
             />
           </div>
@@ -161,7 +161,7 @@ export default function ProfileTab() {
 
         {/* Email */}
         <div className="space-y-1.5">
-          <Label className="text-sm font-medium text-[#EDF6F9]">Email</Label>
+          <Label className="text-sm font-medium text-[#EDF6F9]">电子邮件</Label>
           <div className="relative">
             <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[rgba(255,255,255,0.3)]" />
             <Input
@@ -176,7 +176,7 @@ export default function ProfileTab() {
 
         {/* Phone */}
         <div className="space-y-1.5">
-          <Label className="text-sm font-medium text-[#EDF6F9]">Phone</Label>
+          <Label className="text-sm font-medium text-[#EDF6F9]">电话</Label>
           <div className="relative">
             <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[rgba(255,255,255,0.3)]" />
             <Input
@@ -191,13 +191,13 @@ export default function ProfileTab() {
 
         {/* Home City */}
         <div className="space-y-1.5">
-          <Label className="text-sm font-medium text-[#EDF6F9]">Home City</Label>
+          <Label className="text-sm font-medium text-[#EDF6F9]">所在城市</Label>
           <div className="relative">
             <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[rgba(255,255,255,0.3)]" />
             <Input
               value={form.homeCity}
               onChange={(e) => updateField('homeCity', e.target.value)}
-              placeholder="Where are you based?"
+              placeholder="您位于何处？"
               className="h-11 bg-[rgba(255,255,255,0.06)] border-[rgba(255,255,255,0.1)] text-white placeholder:text-[rgba(255,255,255,0.3)] focus:border-[#219EBC] rounded-[8px] pl-10"
             />
           </div>
@@ -205,12 +205,12 @@ export default function ProfileTab() {
 
         {/* Timezone */}
         <div className="space-y-1.5 md:col-span-2">
-          <Label className="text-sm font-medium text-[#EDF6F9]">Timezone</Label>
+          <Label className="text-sm font-medium text-[#EDF6F9]">时区</Label>
           <div className="relative">
             <Globe className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[rgba(255,255,255,0.3)] z-10" />
             <Select value={form.timezone} onValueChange={(value) => updateField('timezone', value)}>
               <SelectTrigger className="h-11 bg-[rgba(255,255,255,0.06)] border-[rgba(255,255,255,0.1)] text-white focus:border-[#219EBC] rounded-[8px] pl-10 w-full">
-                <SelectValue placeholder="Select timezone" />
+                <SelectValue placeholder="选择时区" />
               </SelectTrigger>
               <SelectContent className="bg-[#0A2463] border-[rgba(255,255,255,0.1)] text-white">
                 {timezones.map((tz) => (
@@ -225,13 +225,13 @@ export default function ProfileTab() {
 
         {/* Bio */}
         <div className="space-y-1.5 md:col-span-2">
-          <Label className="text-sm font-medium text-[#EDF6F9]">Bio</Label>
+          <Label className="text-sm font-medium text-[#EDF6F9]">个人简介</Label>
           <div className="relative">
             <FileText className="absolute left-3 top-3 w-4 h-4 text-[rgba(255,255,255,0.3)]" />
             <Textarea
               value={form.bio}
               onChange={(e) => updateField('bio', e.target.value)}
-              placeholder="Tell us about your travel style..."
+              placeholder="告诉我们您的旅行风格..."
               maxLength={200}
               className="min-h-[100px] resize-y bg-[rgba(255,255,255,0.06)] border-[rgba(255,255,255,0.1)] text-white placeholder:text-[rgba(255,255,255,0.3)] focus:border-[#219EBC] rounded-[8px] pl-10"
             />
@@ -253,16 +253,16 @@ export default function ProfileTab() {
           {saveState === 'saving' && (
             <span className="inline-flex items-center gap-2">
               <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              Saving...
+              保存中...
             </span>
           )}
           {saveState === 'saved' && (
             <span className="inline-flex items-center gap-2 text-[#06D6A0]">
               <Check className="w-4 h-4" />
-              Saved!
+              已保存！
             </span>
           )}
-          {saveState === 'idle' && 'Save Changes'}
+          {saveState === 'idle' && '保存更改'}
         </Button>
       </motion.div>
     </motion.div>

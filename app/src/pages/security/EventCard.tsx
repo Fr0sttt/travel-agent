@@ -19,6 +19,8 @@ import {
   severityBgColors,
   statusColors,
   statusBgColors,
+  statusLabels,
+  categoryLabel,
 } from './data';
 import type { Status } from './data';
 
@@ -42,12 +44,12 @@ function timeAgo(timestamp: string): string {
   const then = new Date(timestamp);
   const diffMs = now.getTime() - then.getTime();
   const diffMins = Math.floor(diffMs / 60000);
-  if (diffMins < 1) return 'Just now';
-  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffMins < 1) return '刚刚';
+  if (diffMins < 60) return `${diffMins}分钟前`;
   const diffHours = Math.floor(diffMins / 60);
-  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffHours < 24) return `${diffHours}小时前`;
   const diffDays = Math.floor(diffHours / 24);
-  return `${diffDays}d ago`;
+  return `${diffDays}天前`;
 }
 
 export default function EventCard({
@@ -134,7 +136,7 @@ export default function EventCard({
             className="text-xs mt-0.5 font-mono"
             style={{ color: 'rgba(255,255,255,0.3)' }}
           >
-            {timeAgo(event.timestamp)} · {event.category}
+            {timeAgo(event.timestamp)} · {categoryLabel(event.category)}
           </div>
         </div>
 
@@ -143,7 +145,7 @@ export default function EventCard({
           className="px-2.5 py-1 rounded-full text-xs font-medium flex-shrink-0"
           style={{ background: statBg, color: statColor }}
         >
-          {event.status}
+          {statusLabels[event.status]}
         </span>
 
         {/* Chevron */}
@@ -178,13 +180,13 @@ export default function EventCard({
               <div className="rounded-lg p-4" style={{ background: 'rgba(255,255,255,0.03)' }}>
                 <div className="flex items-center gap-2 mb-2">
                   <Brain className="w-4 h-4 text-[#8ECAE6]" />
-                  <span className="text-sm font-semibold text-[#8ECAE6]">AI Analysis</span>
+                  <span className="text-sm font-semibold text-[#8ECAE6]">AI 分析</span>
                 </div>
                 <p className="text-sm leading-relaxed" style={{ color: 'rgba(255,255,255,0.7)' }}>
                   {event.aiReasoning}
                 </p>
                 <div className="mt-2 text-xs font-mono" style={{ color: '#2EC4B6' }}>
-                  Confidence: {event.confidence}%
+                  置信度：{event.confidence}%
                 </div>
               </div>
 
@@ -192,7 +194,7 @@ export default function EventCard({
               <div>
                 <div className="flex items-center gap-2 mb-2">
                   <BookOpen className="w-4 h-4 text-[#8ECAE6]" />
-                  <span className="text-sm font-semibold text-[#8ECAE6]">Data Sources</span>
+                  <span className="text-sm font-semibold text-[#8ECAE6]">数据来源</span>
                 </div>
                 <ul className="space-y-1.5">
                   {event.sources.map((s, i) => (
@@ -208,7 +210,7 @@ export default function EventCard({
               <div>
                 <div className="flex items-center gap-2 mb-2">
                   <Lightbulb className="w-4 h-4 text-[#8ECAE6]" />
-                  <span className="text-sm font-semibold text-[#8ECAE6]">Recommendations</span>
+                  <span className="text-sm font-semibold text-[#8ECAE6]">建议</span>
                 </div>
                 <ol className="space-y-1.5">
                   {event.recommendations.map((r, i) => (
@@ -231,7 +233,7 @@ export default function EventCard({
                     className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium text-white transition-all hover:opacity-90"
                     style={{ background: '#06D6A0' }}
                   >
-                    <Check className="w-4 h-4" /> Approve
+                    <Check className="w-4 h-4" /> 批准
                   </button>
                   <button
                     onClick={(e) => {
@@ -244,7 +246,7 @@ export default function EventCard({
                       color: '#EDF6F9',
                     }}
                   >
-                    <X className="w-4 h-4" /> Dismiss
+                    <X className="w-4 h-4" /> 驳回
                   </button>
                   <button
                     onClick={(e) => {
@@ -253,7 +255,7 @@ export default function EventCard({
                     className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium text-white transition-all hover:opacity-90"
                     style={{ background: '#E29578' }}
                   >
-                    <ArrowUpRight className="w-4 h-4" /> Escalate
+                    <ArrowUpRight className="w-4 h-4" /> 升级处理
                   </button>
                 </div>
               )}

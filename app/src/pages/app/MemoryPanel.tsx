@@ -42,7 +42,7 @@ export default function MemoryPanel() {
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search memory..."
+            placeholder="搜索记忆..."
             className="w-full h-9 rounded-full pl-9 pr-4 text-xs outline-none focus:border-[#219EBC]"
             style={{
               background: 'rgba(255,255,255,0.06)',
@@ -61,11 +61,11 @@ export default function MemoryPanel() {
             <div className="flex items-center gap-2 mb-1">
               <Zap className="w-4 h-4 text-[#FFD166]" />
               <h4 className="text-sm font-semibold text-white" style={{ fontFamily: "'Outfit Variable', Outfit, sans-serif" }}>
-                Short-Term Memory
+                短期记忆
               </h4>
             </div>
             <p className="text-[11px] mb-3" style={{ color: 'rgba(255,255,255,0.4)', fontFamily: "'Inter Variable', Inter, sans-serif" }}>
-              Current conversation context
+              当前对话上下文
             </p>
 
             <div className="flex flex-wrap gap-2">
@@ -97,11 +97,11 @@ export default function MemoryPanel() {
             <div className="flex items-center gap-2 mb-1">
               <Database className="w-4 h-4 text-[#219EBC]" />
               <h4 className="text-sm font-semibold text-white" style={{ fontFamily: "'Outfit Variable', Outfit, sans-serif" }}>
-                Long-Term Memory
+                长期记忆
               </h4>
             </div>
             <p className="text-[11px] mb-3" style={{ color: 'rgba(255,255,255,0.4)', fontFamily: "'Inter Variable', Inter, sans-serif" }}>
-              Retrieved from past interactions
+              从过去的交互中检索
             </p>
 
             <div className="space-y-2.5">

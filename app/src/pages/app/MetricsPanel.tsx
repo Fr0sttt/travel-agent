@@ -145,7 +145,7 @@ function MetricBar({ metric, index }: { metric: Metric; index: number }) {
                 {metric.description}
               </p>
               <button className="text-[11px] transition-colors hover:underline" style={{ color: '#8ECAE6' }}>
-                Click to see improvement suggestions
+                点击查看改进建议
               </button>
             </div>
           </motion.div>
@@ -165,7 +165,7 @@ export default function MetricsPanel() {
       <div className="flex flex-col items-center py-6 border-b" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
         <CircularScore key={overallScore} score={overallScore} />
         <span className="mt-3 text-[10px]" style={{ color: 'rgba(255,255,255,0.3)', fontFamily: "'JetBrains Mono Variable', monospace" }}>
-          Live evaluation
+          实时评估
         </span>
       </div>
 

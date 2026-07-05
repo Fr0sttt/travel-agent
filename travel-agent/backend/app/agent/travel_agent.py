@@ -18,10 +18,31 @@ from collections.abc import AsyncGenerator
 from datetime import datetime
 from typing import Any
 
-from agent.graph import TravelState, travel_graph
+from agent.graph import create_initial_state
 from agent.prompts import FOLLOW_UP_PROMPT
 from agent.tools import TOOLS
 from models.schemas import AgentResponse, Itinerary, ToolCallRecord
+
+# 节点名 -> 用户可读的进度提示，astream 拿到某个节点的输出时用这个映射
+# 生成 progress 事件的文案。
+_NODE_STATUS_MESSAGES = {
+    "intent_router": "正在理解您的意图...",
+    "preference_collector": "正在收集您的旅行偏好...",
+    "constraint_normalizer": "正在分析您的需求...",
+    "destination_search": "正在搜索目的地景点...",
+    "route_planner": "正在规划最佳路线...",
+    "weather_advisor": "正在查询天气预报...",
+    "budget_estimator": "正在估算旅行费用...",
+    "itinerary_synthesizer": "正在合成行程计划...",
+    "safety_reviewer": "正在进行安全审查...",
+    "output_formatter": "正在格式化输出...",
+    "qa_responder": "正在回答您的问题...",
+    "chitchat_responder": "正在回应...",
+}
+
+# 用于计算 progress 百分比的节点总数（跟 _NODE_STATUS_MESSAGES 数量一致即可，
+# 只是个大致进度展示，不要求精确）
+_TOTAL_NODE_COUNT = len(_NODE_STATUS_MESSAGES)
 
 
 class TravelAgent:
@@ -29,20 +50,24 @@ class TravelAgent:
     Travel Agent 主类
 
     提供完整的旅行规划服务，包括：
+    - 意图路由（新规划/继续澄清/行程问答/闲聊）
     - 偏好收集和澄清
     - 目的地搜索和 POI 发现
     - 路线规划和天气查询
     - 预算估算和行程合成
     - 安全审查和输出格式化
 
+    执行引擎是真正的 LangGraph StateGraph（通过 self.graph.astream 驱动），
+    状态持久化交给传入的 checkpointer（比如 AsyncPostgresSaver），
+    支持进程重启后用同一个 session_id 继续未完成的对话。
+
     Attributes:
-        graph: LangGraph 编译后的状态图
-        sessions: 会话状态缓存（简单内存实现）
+        graph: 编译好的 LangGraph 状态图（已绑定 checkpointer）
     """
 
     def __init__(
         self,
-        llm_client: Any | None = None,
+        graph: Any,
         memory_manager: Any | None = None,
         safety_guard: Any | None = None,
         langfuse_client: Any | None = None,
@@ -51,18 +76,16 @@ class TravelAgent:
         初始化 Travel Agent
 
         Args:
-            llm_client: LLM 客户端（如 OpenAI 客户端）
-            memory_manager: 记忆管理器（如 mem0 实例）
+            graph: 编译好的 LangGraph 状态图（由 main.py 的 lifespan 传入，
+                已经在编译时绑定了 checkpointer）
+            memory_manager: 记忆管理器（会话历史持久化、长期记忆检索）
             safety_guard: 安全审查器
             langfuse_client: Langfuse 观测客户端
         """
-        self.graph = travel_graph
-        self.llm = llm_client
+        self.graph = graph
         self.memory = memory_manager
         self.safety = safety_guard
         self.langfuse = langfuse_client
-        # 简单的内存会话缓存
-        self.sessions: dict[str, dict[str, Any]] = {}
 
     async def plan_travel(
         self,
@@ -70,143 +93,189 @@ class TravelAgent:
         session_id: str | None = None,
     ) -> AsyncGenerator[str, None]:
         """
-        主规划流程 - 流式输出
+        主入口 - 流式输出
 
-        接收用户输入，执行完整的旅行规划流程，通过异步生成器流式返回结果。
+        接收用户输入，交给 LangGraph 图执行（意图路由 -> 对应分支），
+        通过异步生成器流式返回结果。原来 chat() 方法的职责（判断"是继续
+        规划还是行程问答还是闲聊"）现在由图入口的 intent_router 节点承担，
+        不再需要在 TravelAgent 层单独维护一套判断逻辑，所以 plan_travel
+        是唯一入口，chat() 已删除。
+
+        断点续传：session_id 直接当作 LangGraph 的 thread_id 使用。
+        checkpointer（绑定在 self.graph 编译时）会自动持久化每个节点执行后
+        的状态，进程重启后用同一个 session_id 调用，图会从上次停下的地方
+        （比如等待用户澄清）继续，而不是从头重新跑。
 
         Args:
             user_input: 用户的自然语言输入
-            session_id: 会话 ID（可选，首次调用自动生成）
+            session_id: 会话 ID（可选，首次调用自动生成，之后必须复用同一个
+                ID 才能续上之前的对话）
 
         Yields:
-            str: JSON 格式的状态更新，包含当前步骤、消息和最终结果
-
-        Examples:
-            >>> async for update in agent.plan_travel("我想去杭州玩3天", "sess_001"):
-            ...     print(update)
+            str: SSE 格式的事件字符串（status/progress/clarify/reply/complete/error）
         """
-        # 生成或获取会话 ID
         session_id = session_id or f"sess_{uuid.uuid4().hex[:8]}"
+        call_id = uuid.uuid4().hex[:6]
+        config = {"configurable": {"thread_id": session_id}}
 
-        # 检查是否是追问回复（已有会话）
-        existing_state = self.sessions.get(session_id)
+        print(
+            f"[TravelAgent][{call_id}] plan_travel 被调用: "
+            f"session_id={session_id}, user_input={user_input[:60]!r}",
+            flush=True,
+        )
 
-        if existing_state and existing_state.get("needs_clarification"):
-            # 追问模式：合并用户输入到现有会话
+        # 查一下 checkpointer 里有没有这个 thread 的历史状态，
+        # 用来判断这是全新对话还是接着上次未完成的继续。
+        try:
+            existing_snapshot = await self.graph.aget_state(config)
+            existing_values = existing_snapshot.values if existing_snapshot else {}
+        except Exception as exc:
+            print(f"[TravelAgent][{call_id}] 读取 checkpoint 状态失败（视为全新会话）: {exc}", flush=True)
+            existing_values = {}
+
+        has_existing_state = bool(existing_values)
+        print(
+            f"[TravelAgent][{call_id}] checkpoint 状态: has_existing_state={has_existing_state} "
+            f"needs_clarification={existing_values.get('needs_clarification')}",
+            flush=True,
+        )
+
+        if has_existing_state:
             yield self._format_event(
                 "status",
                 {"message": "收到补充信息，继续规划...", "session_id": session_id},
             )
-
-            # 合并新的输入
-            prev_input = existing_state.get("user_input", "")
-            combined_input = f"{prev_input}\n用户补充: {user_input}"
-
-            # 获取当前偏好并更新
-            current_pref = existing_state.get("preference", {})
-
-            # 重新创建状态
-            state = TravelState.create(session_id, combined_input)
-            state["preference"] = current_pref
-            state["messages"] = existing_state.get("messages", [])
-            state["messages"].append({"role": "user", "content": user_input})
+            # 把新一轮用户输入合并进去，图会从 intent_router 重新判断意图
+            # （比如上次在等澄清，这次用户补充了信息，intent_router 会分到
+            # continue_clarify 分支；如果用户改口说了完全不相关的新目的地，
+            # 也能被正确识别为 new_plan）。
+            input_state = {
+                "user_input": user_input,
+                "messages": (existing_values.get("messages") or []) + [
+                    {"role": "user", "content": user_input}
+                ],
+            }
         else:
-            # 新建规划流程
-            state = TravelState.create(session_id, user_input)
-            state["messages"] = [{"role": "user", "content": user_input}]
-            self.sessions[session_id] = state
-
             yield self._format_event(
                 "status",
-                {"message": "开始规划您的旅行...", "session_id": session_id},
+                {"message": "开始处理您的请求...", "session_id": session_id},
             )
+            input_state = create_initial_state(session_id, user_input)
+            input_state["messages"] = [{"role": "user", "content": user_input}]
 
-        # 执行 LangGraph
         try:
-            current_state = state
-            iteration = 0
-            max_iterations = 10
+            # final_state 的起点必须是完整的初始状态（input_state），不能只是
+            # existing_values——全新对话时 existing_values 是空字典，如果不
+            # 从 input_state 起步，后续 messages/preference 等字段会缺失，
+            # 第一个节点（intent_router 只改 user_intent/current_node 两个字段）
+            # 跑完后 final_state 里就没有 messages，preference_collector 一读
+            # state["messages"] 就会 KeyError。
+            final_state: dict[str, Any] = dict(existing_values)
+            final_state.update(input_state)
+            node_index = 0
 
-            # 逐步执行图中的每个节点
-            node_sequence = [
-                ("preference_collector", "正在收集您的旅行偏好..."),
-                ("constraint_normalizer", "正在分析您的需求..."),
-                ("destination_search", "正在搜索目的地景点..."),
-                ("route_planner", "正在规划最佳路线..."),
-                ("weather_advisor", "正在查询天气预报..."),
-                ("budget_estimator", "正在估算旅行费用..."),
-                ("itinerary_synthesizer", "正在合成行程计划..."),
-                ("safety_reviewer", "正在进行安全审查..."),
-                ("output_formatter", "正在格式化输出..."),
-            ]
+            async for step in self.graph.astream(input_state, config=config, stream_mode="updates"):
+                # stream_mode="updates" 每次迭代给一个 {节点名: 该节点输出的状态更新}
+                for node_name, node_output in step.items():
+                    node_index += 1
+                    final_state.update(node_output)
 
-            for node_name, status_msg in node_sequence:
-                if iteration >= max_iterations:
-                    yield self._format_event(
-                        "error",
-                        {"message": "规划流程超出最大迭代次数", "session_id": session_id},
+                    status_msg = _NODE_STATUS_MESSAGES.get(node_name, f"执行 {node_name}...")
+                    print(
+                        f"[TravelAgent][{call_id}] 节点 {node_name} 完成 "
+                        f"poi_list数={len(final_state.get('poi_list') or [])} "
+                        f"itinerary长度={len(final_state.get('itinerary') or '')} "
+                        f"needs_clarification={final_state.get('needs_clarification')} "
+                        f"user_intent={final_state.get('user_intent')}",
+                        flush=True,
                     )
-                    break
-
-                iteration += 1
-                current_state["iteration_count"] = iteration
-
-                # 发送状态更新
-                yield self._format_event(
-                    "progress",
-                    {
-                        "step": node_name,
-                        "message": status_msg,
-                        "progress": int((iteration / len(node_sequence)) * 100),
-                        "session_id": session_id,
-                    },
-                )
-
-                # 获取节点函数
-                node_func = self._get_node_function(node_name)
-                if node_func is None:
-                    continue
-
-                # 执行节点
-                try:
-                    current_state = await node_func(current_state)
-                except Exception as e:
-                    error_msg = f"节点 {node_name} 执行失败: {str(e)}"
-                    current_state["risk_alerts"].append(error_msg)
-                    yield self._format_event(
-                        "warning",
-                        {"message": error_msg, "step": node_name, "session_id": session_id},
-                    )
-                    # 继续执行后续节点，不要中断
-
-                # 检查是否需要澄清
-                if node_name == "preference_collector" and current_state.get("needs_clarification"):
-                    self.sessions[session_id] = dict(current_state)
-                    follow_up = ""
-                    if current_state.get("messages"):
-                        last_msg = current_state["messages"][-1]
-                        if isinstance(last_msg, dict) and last_msg.get("role") == "assistant":
-                            follow_up = last_msg.get("content", "")
 
                     yield self._format_event(
-                        "clarify",
+                        "progress",
                         {
-                            "message": follow_up or "请补充更多信息",
-                            "missing_fields": current_state.get("missing_fields", []),
+                            "step": node_name,
+                            "message": status_msg,
+                            "progress": min(95, int((node_index / _TOTAL_NODE_COUNT) * 100)),
                             "session_id": session_id,
                         },
                     )
-                    return  # 等待用户回复
 
-            # 保存最终状态
-            self.sessions[session_id] = dict(current_state)
+            # ===== 图执行完毕（或在 preference_collector 之后停在 END 等待澄清）=====
+            intent = final_state.get("user_intent")
+            needs_clarification = bool(final_state.get("needs_clarification"))
+            itinerary_md = final_state.get("itinerary") or ""
+            qa_response = final_state.get("qa_response")
+            chitchat_response = final_state.get("chitchat_response")
+            risk_alerts = final_state.get("risk_alerts") or []
+            tool_calls = final_state.get("tool_calls") or []
 
-            # 发送最终结果
-            itinerary_md = current_state.get("itinerary", "")
-            risk_alerts = current_state.get("risk_alerts", [])
-            tool_calls = current_state.get("tool_calls", [])
+            if needs_clarification:
+                # 还缺关键信息，等待用户继续补充（图已经在 END 停住，
+                # checkpointer 记住了这个状态，下次同 session_id 调用会续上）
+                follow_up = ""
+                messages = final_state.get("messages") or []
+                if messages:
+                    last_msg = messages[-1]
+                    if isinstance(last_msg, dict) and last_msg.get("role") == "assistant":
+                        follow_up = last_msg.get("content", "")
 
-            # 构建响应
+                if self.memory:
+                    try:
+                        await self.memory.process_interaction(
+                            user_input, follow_up or "请补充更多信息", final_state,
+                        )
+                    except Exception as exc:
+                        print(f"[TravelAgent][{call_id}] 保存澄清会话历史失败: {exc}")
+
+                yield self._format_event(
+                    "clarify",
+                    {
+                        "message": follow_up or "请补充更多信息",
+                        "missing_fields": final_state.get("missing_fields", []),
+                        "session_id": session_id,
+                    },
+                )
+                return
+
+            if intent == "faq_about_itinerary" and qa_response:
+                if self.memory:
+                    try:
+                        await self.memory.process_interaction(user_input, qa_response, final_state)
+                    except Exception as exc:
+                        print(f"[TravelAgent][{call_id}] 保存问答记忆失败: {exc}")
+                yield self._format_event(
+                    "reply",
+                    {"message": qa_response, "session_id": session_id},
+                )
+                return
+
+            if intent == "chitchat" and chitchat_response:
+                if self.memory:
+                    try:
+                        await self.memory.process_interaction(user_input, chitchat_response, final_state)
+                    except Exception as exc:
+                        print(f"[TravelAgent][{call_id}] 保存闲聊记忆失败: {exc}")
+                yield self._format_event(
+                    "reply",
+                    {"message": chitchat_response, "session_id": session_id},
+                )
+                return
+
+            # 走到这里说明完整规划流程跑完了，itinerary_md 应该有内容
+            print(
+                f"[TravelAgent][{call_id}] 即将发出 complete 事件: "
+                f"itinerary长度={len(itinerary_md)} tool_calls数={len(tool_calls)} "
+                f"risk_alerts数={len(risk_alerts)}",
+                flush=True,
+            )
+
+            if self.memory:
+                try:
+                    final_reply = itinerary_md or "行程已生成"
+                    await self.memory.process_interaction(user_input, final_reply, final_state)
+                except Exception as e:
+                    print(f"[TravelAgent][{call_id}] 写入记忆失败: {e}")
+
             response = AgentResponse(
                 session_id=session_id,
                 status="complete",
@@ -216,7 +285,7 @@ class TravelAgent:
                 tool_calls=[ToolCallRecord(**tc) for tc in tool_calls if isinstance(tc, dict)],
                 risk_alerts=risk_alerts,
                 needs_clarification=False,
-                trace_id=current_state.get("trace_id"),
+                trace_id=final_state.get("trace_id"),
             )
 
             yield self._format_event(
@@ -232,6 +301,13 @@ class TravelAgent:
 
         except Exception as e:
             error_detail = traceback.format_exc()
+            # 之前这个异常只发进了 SSE error 事件给前端，后端终端完全没有
+            # 任何输出——看起来像是"卡住了"，实际是异常被这里默默吞掉了。
+            # 必须打印到后端终端，否则排查时看不到真实的报错位置。
+            print(
+                f"[TravelAgent][{call_id}] plan_travel 内部异常，完整堆栈如下:\n{error_detail}",
+                flush=True,
+            )
             yield self._format_event(
                 "error",
                 {
@@ -241,47 +317,11 @@ class TravelAgent:
                 },
             )
 
-    async def chat(
-        self,
-        message: str,
-        session_id: str,
-    ) -> AsyncGenerator[str, None]:
-        """
-        聊天模式 - 支持自由对话
-
-        接收用户消息，可以是对已有行程的追问或新的规划需求。
-
-        Args:
-            message: 用户消息
-            session_id: 会话 ID
-
-        Yields:
-            str: JSON 格式的响应
-        """
-        # 检查是否已有行程
-        existing = self.sessions.get(session_id)
-
-        if existing and existing.get("itinerary") and not message.startswith("新规划"):
-            # 追问模式 - 基于已有行程回答
-            yield self._format_event(
-                "status",
-                {"message": "正在回答您的问题...", "session_id": session_id},
-            )
-
-            # 简单的问答回复（实际可由 LLM 生成）
-            reply = self._generate_qa_reply(message, existing)
-            yield self._format_event(
-                "reply",
-                {"message": reply, "session_id": session_id},
-            )
-        else:
-            # 新规划需求
-            async for update in self.plan_travel(message, session_id):
-                yield update
-
-    def get_session_state(self, session_id: str) -> dict[str, Any] | None:
+    async def get_session_state(self, session_id: str) -> dict[str, Any] | None:
         """
         获取会话状态
+
+        直接从 checkpointer 读取图执行的最新状态快照，不再依赖内存字典。
 
         Args:
             session_id: 会话 ID
@@ -289,11 +329,30 @@ class TravelAgent:
         Returns:
             会话状态字典或 None
         """
-        return self.sessions.get(session_id)
+        try:
+            snapshot = await self.graph.aget_state({"configurable": {"thread_id": session_id}})
+            if snapshot and snapshot.values:
+                return dict(snapshot.values)
+        except Exception as exc:
+            print(f"[TravelAgent] 读取 checkpoint 状态失败: {exc}")
+
+        if self.memory:
+            try:
+                persisted = self.memory.get_session_snapshot(session_id)
+                if persisted:
+                    return persisted
+            except Exception as exc:
+                print(f"[TravelAgent] 读取持久化快照失败: {exc}")
+        return None
 
     def clear_session(self, session_id: str) -> bool:
         """
-        清除会话
+        清除会话的持久化记录（chat_sessions/chat_messages）。
+
+        注意：这里只清 self.memory 管理的会话历史表，不清 LangGraph
+        checkpointer 里的图执行状态——checkpointer 的清理需要按 thread_id
+        删除对应的 checkpoint 记录，如果后续需要“彻底删除会话”包含图状态，
+        再补充调用 checkpointer 的删除接口。
 
         Args:
             session_id: 会话 ID
@@ -301,96 +360,14 @@ class TravelAgent:
         Returns:
             是否成功清除
         """
-        if session_id in self.sessions:
-            del self.sessions[session_id]
-            return True
-        return False
-
-    def _get_node_function(self, node_name: str):
-        """
-        根据节点名称获取节点函数
-
-        Args:
-            node_name: 节点名称
-
-        Returns:
-            节点函数或 None
-        """
-        from agent.graph import (
-            budget_estimator,
-            constraint_normalizer,
-            destination_search,
-            itinerary_synthesizer,
-            output_formatter,
-            preference_collector,
-            route_planner,
-            safety_reviewer,
-            weather_advisor,
-        )
-
-        node_map = {
-            "preference_collector": preference_collector,
-            "constraint_normalizer": constraint_normalizer,
-            "destination_search": destination_search,
-            "route_planner": route_planner,
-            "weather_advisor": weather_advisor,
-            "budget_estimator": budget_estimator,
-            "itinerary_synthesizer": itinerary_synthesizer,
-            "safety_reviewer": safety_reviewer,
-            "output_formatter": output_formatter,
-        }
-        return node_map.get(node_name)
-
-    def _generate_qa_reply(self, message: str, state: dict) -> str:
-        """
-        生成问答回复（简化版）
-
-        Args:
-            message: 用户问题
-            state: 当前会话状态
-
-        Returns:
-            回复文本
-        """
-        message_lower = message.lower()
-        itinerary = state.get("itinerary", "")
-        preference = state.get("preference") or {}
-        pref_dict = preference if isinstance(preference, dict) else {}
-
-        if any(kw in message for kw in ["预算", "多少钱", "费用"]):
-            budget = state.get("total_budget_estimate", {})
-            return (
-                f"根据估算，您的旅行总费用大约在 {budget.get('min', 'N/A')} - {budget.get('max', 'N/A')} 元之间。"
-                f"\n\n具体费用明细可以在行程计划中查看。"
-            )
-
-        if any(kw in message for kw in ["天气", "下雨", "温度"]):
-            weather = state.get("weather", [])
-            if weather:
-                first_day = weather[0]
-                return (
-                    f"{first_day.get('date', '')} 的天气是 {first_day.get('description', '未知')}，"
-                    f"温度 {first_day.get('temperature_min', 'N/A')}~{first_day.get('temperature_max', 'N/A')}°C，"
-                    f"降水概率 {first_day.get('precipitation_probability', 0)}%。"
-                )
-            return "暂无天气信息。"
-
-        if any(kw in message for kw in ["景点", "去哪", "玩什么"]):
-            poi_list = state.get("poi_list", [])
-            poi_names = [p.get("name", "") for p in poi_list[:5]]
-            return f"推荐景点: {', '.join(poi_names)} 等。详细安排请查看行程计划。"
-
-        if any(kw in message for kw in ["修改", "改", "换", "调整"]):
-            return (
-                "如果您需要修改行程，请直接告诉我您的新的需求，"
-                "例如\"我想换成上海的行程\"或\"预算提高到5000\"。"
-            )
-
-        return (
-            f"我理解您的问题是关于: {message}\n\n"
-            f"您可以查看上方生成的完整行程计划，"
-            f"或者告诉我您需要调整的地方，我可以为您重新规划。"
-        )
+        cleared = False
+        if self.memory:
+            try:
+                self.memory.delete_session(session_id)
+                cleared = True
+            except Exception as exc:
+                print(f"[TravelAgent] 删除持久化会话失败: {exc}")
+        return cleared
 
     def _format_event(self, event_type: str, data: dict) -> str:
         """
@@ -404,7 +381,3 @@ class TravelAgent:
             SSE 格式的字符串
         """
         return f"data: {json.dumps({'type': event_type, **data}, ensure_ascii=False)}\n\n"
-
-
-# 全局 Agent 实例
-travel_agent = TravelAgent()

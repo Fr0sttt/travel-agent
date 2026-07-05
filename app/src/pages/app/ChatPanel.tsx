@@ -1,13 +1,42 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Paperclip, Globe, Plus, MessageSquare, Loader2 } from 'lucide-react';
+import { Send, Paperclip, Globe, Plus, MessageSquare, Loader2, RefreshCw, Trash2 } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { useTravel } from '@/contexts/TravelContext';
 import MessageBubble from './MessageBubble';
 import { quickActionChips } from './mockData';
 
 export default function ChatPanel() {
-  const { messages, status, sendMessage, resetSession, isBackendHealthy, checkBackendHealth } = useTravel();
+  const {
+    messages,
+    status,
+    sendMessage,
+    resetSession,
+    isBackendHealthy,
+    checkBackendHealth,
+    sessions,
+    sessionId,
+    switchSession,
+    deleteSession,
+    refreshSessions,
+  } = useTravel();
   const [inputText, setInputText] = useState('');
+  const [sessionToDelete, setSessionToDelete] = useState<{ id: string; title: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const isProcessing = status === 'processing';
 
@@ -47,13 +76,6 @@ export default function ChatPanel() {
     sendMessage(chip);
   };
 
-  const chatHistory = [
-    { id: 'h1', title: 'Kyoto 5-Day Temple Tour', timestamp: '10:15 AM' },
-    { id: 'h2', title: 'Tokyo Cherry Blossom Planning', timestamp: 'Yesterday' },
-    { id: 'h3', title: 'Bali Beach & Culture Trip', timestamp: 'Mar 20' },
-    { id: 'h4', title: 'Paris Weekend Getaway', timestamp: 'Mar 15' },
-  ];
-
   return (
     <div className="flex flex-col h-full" style={{ background: 'rgba(10, 36, 99, 0.95)', backdropFilter: 'blur(12px)' }}>
       {/* Header */}
@@ -62,7 +84,7 @@ export default function ChatPanel() {
           <div className="flex items-center gap-2">
             <div className={`w-2 h-2 rounded-full animate-pulse ${isBackendHealthy === false ? 'bg-[#EF476F]' : 'bg-[#06D6A0]'}`} />
             <span className="text-sm font-semibold text-white" style={{ fontFamily: "'Outfit Variable', Outfit, sans-serif" }}>
-              Chat
+              聊天
             </span>
           </div>
           {isProcessing && (
@@ -75,7 +97,7 @@ export default function ChatPanel() {
           onClick={resetSession}
           className="w-8 h-8 rounded-full flex items-center justify-center transition-all hover:scale-105"
           style={{ background: '#1A659E' }}
-          title="New chat"
+          title="新聊天"
         >
           <Plus className="w-4 h-4 text-white" />
         </button>
@@ -83,24 +105,56 @@ export default function ChatPanel() {
 
       {/* Chat History List */}
       <div className="flex-shrink-0 border-b" style={{ borderColor: 'rgba(255,255,255,0.06)', maxHeight: '180px' }}>
+        <div className="flex items-center justify-between px-4 py-2 border-b" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+          <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.45)' }}>会话列表</span>
+          <button
+            type="button"
+            onClick={() => refreshSessions()}
+            className="w-7 h-7 rounded-full flex items-center justify-center transition-colors hover:bg-white/[0.08]"
+            title="刷新会话"
+          >
+            <RefreshCw className="w-3.5 h-3.5 text-[#8ECAE6]" />
+          </button>
+        </div>
         <ScrollArea className="h-full">
           <div className="py-1">
-            {chatHistory.map((item, i) => (
-              <div
-                key={item.id}
-                className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors ${i === 0 ? 'border-l-[3px] bg-[rgba(33,158,188,0.08)]' : 'border-l-[3px] border-transparent hover:bg-white/[0.05]'}`}
-                style={i === 0 ? { borderLeftColor: '#219EBC' } : {}}
-              >
-                <MessageSquare className="w-4 h-4 flex-shrink-0 text-[#8ECAE6]" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs truncate" style={{ color: '#EDF6F9', fontFamily: "'Inter Variable', Inter, sans-serif" }}>
-                    {item.title}
-                  </p>
-                </div>
-                <span className="flex-shrink-0 text-[10px]" style={{ color: 'rgba(255,255,255,0.3)', fontFamily: "'JetBrains Mono Variable', monospace" }}>
-                  {item.timestamp}
-                </span>
+            {sessions.length === 0 && (
+              <div className="px-4 py-3 text-xs" style={{ color: 'rgba(255,255,255,0.35)' }}>
+                暂无会话
               </div>
+            )}
+            {sessions.map((item) => (
+              <ContextMenu key={item.session_id}>
+                <ContextMenuTrigger asChild>
+                  <div
+                    onClick={() => !isProcessing && switchSession(item.session_id)}
+                    className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors border-l-[3px] ${sessionId === item.session_id ? 'bg-[rgba(33,158,188,0.08)]' : 'border-transparent hover:bg-white/[0.05]'}`}
+                    style={sessionId === item.session_id ? { borderLeftColor: '#219EBC' } : {}}
+                  >
+                    <MessageSquare className="w-4 h-4 flex-shrink-0 text-[#8ECAE6]" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs truncate" style={{ color: '#EDF6F9', fontFamily: "'Inter Variable', Inter, sans-serif" }}>
+                        {item.title}
+                      </p>
+                      <p className="text-[10px] truncate mt-0.5" style={{ color: 'rgba(255,255,255,0.35)' }}>
+                        {item.preview}
+                      </p>
+                    </div>
+                    <span className="flex-shrink-0 text-[10px]" style={{ color: 'rgba(255,255,255,0.3)', fontFamily: "'JetBrains Mono Variable', monospace" }}>
+                      {item.last_message_at ? new Date(item.last_message_at).toLocaleDateString() : ''}
+                    </span>
+                  </div>
+                </ContextMenuTrigger>
+                <ContextMenuContent>
+                  <ContextMenuItem
+                    variant="destructive"
+                    onClick={() => setSessionToDelete({ id: item.session_id, title: item.title || '此会话' })}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    删除会话
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              </ContextMenu>
             ))}
           </div>
         </ScrollArea>
@@ -167,7 +221,7 @@ export default function ChatPanel() {
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Describe your trip..."
+              placeholder="描述你的旅行计划..."
               disabled={isProcessing}
               className="w-full h-10 rounded-full px-4 text-sm outline-none transition-colors focus:border-[#219EBC] disabled:opacity-50"
               style={{
@@ -193,6 +247,30 @@ export default function ChatPanel() {
           </div>
         </div>
       </div>
+
+      <AlertDialog open={sessionToDelete !== null} onOpenChange={(open) => !open && setSessionToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>删除这个会话?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {sessionToDelete ? `「${sessionToDelete.title}」的全部对话记录将被永久删除,此操作无法撤销。` : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setSessionToDelete(null)}>取消</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (sessionToDelete) {
+                  void deleteSession(sessionToDelete.id);
+                }
+                setSessionToDelete(null);
+              }}
+            >
+              删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

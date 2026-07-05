@@ -12,6 +12,13 @@ const categoryColors: Record<string, string> = {
   SAFETY: '#E29578',
 };
 
+const categoryLabels: Record<string, string> = {
+  DB: '数据库',
+  API: '接口',
+  CALC: '计算',
+  SAFETY: '安全',
+};
+
 function LogEntryCard({ log, index }: { log: ToolCallLog; index: number }) {
   const [isOpen, setIsOpen] = useState(false);
   const catColor = categoryColors[log.category] || '#219EBC';
@@ -40,7 +47,7 @@ function LogEntryCard({ log, index }: { log: ToolCallLog; index: number }) {
             fontFamily: "'JetBrains Mono Variable', monospace",
           }}
         >
-          {log.category}
+          {categoryLabels[log.category] || log.category}
         </span>
 
         {/* Function name */}
@@ -80,10 +87,10 @@ function LogEntryCard({ log, index }: { log: ToolCallLog; index: number }) {
             className="overflow-hidden"
           >
             <div className="px-3 pb-3 space-y-2 border-t border-white/[0.04]">
-              {/* Parameters */}
+              {/* 参数 */}
               <div className="pt-2">
                 <span className="text-[10px] uppercase tracking-wider" style={{ color: '#8ECAE6', fontFamily: "'JetBrains Mono Variable', monospace" }}>
-                  Parameters
+                  参数
                 </span>
                 <pre
                   className="mt-1 p-2 rounded text-[10px] overflow-x-auto"
@@ -97,10 +104,10 @@ function LogEntryCard({ log, index }: { log: ToolCallLog; index: number }) {
                 </pre>
               </div>
 
-              {/* Result */}
+              {/* 结果 */}
               <div>
                 <span className="text-[10px] uppercase tracking-wider" style={{ color: '#2EC4B6', fontFamily: "'JetBrains Mono Variable', monospace" }}>
-                  Result
+                  结果
                 </span>
                 <p
                   className="mt-1 p-2 rounded text-[10px]"

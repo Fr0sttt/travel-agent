@@ -92,9 +92,9 @@ export default function Security() {
             className="flex items-center gap-2 text-sm mb-4"
             style={{ color: 'rgba(255,255,255,0.4)' }}
           >
-            <span>Dashboard</span>
+            <span>仪表盘</span>
             <ChevronRight className="w-3.5 h-3.5" />
-            <span>Security</span>
+            <span>安全</span>
           </motion.div>
 
           {/* Title */}
@@ -108,7 +108,7 @@ export default function Security() {
               fontFamily: "'Outfit Variable', Outfit, sans-serif",
             }}
           >
-            Security &amp; Compliance Center
+            安全与合规中心
           </motion.h1>
 
           {/* Subtitle */}
@@ -119,8 +119,7 @@ export default function Security() {
             className="text-lg mt-3 max-w-[700px] leading-relaxed"
             style={{ color: 'rgba(255,255,255,0.6)' }}
           >
-            Monitor safety checks, review security events, and manage compliance
-            settings for your AI travel agent.
+            监控安全检查、审查安全事件，并管理您的 AI 旅行代理的合规设置。
           </motion.p>
 
           {/* Last audit badge */}
@@ -135,7 +134,7 @@ export default function Security() {
             }}
           >
             <ShieldCheck className="w-3.5 h-3.5" />
-            Last audit: 2 hours ago
+            最后审计: 2小时前
           </motion.div>
 
           {/* Stat Cards */}
@@ -146,8 +145,8 @@ export default function Security() {
               iconBgColor="rgba(46,196,182,0.15)"
               value={stats.complianceScore}
               suffix="%"
-              label="Safety Compliance Score"
-              trend="+2% this month"
+              label="安全合规分数"
+              trend="+2% 本月"
               trendColor="#06D6A0"
               index={0}
             />
@@ -156,8 +155,8 @@ export default function Security() {
               iconColor="#FFD166"
               iconBgColor="rgba(255,209,102,0.15)"
               value={stats.pendingReviews}
-              label="Active Alerts"
-              trend="Action needed"
+              label="活跃告警"
+              trend="需要行动"
               trendColor="#EF476F"
               index={1}
             />
@@ -166,8 +165,8 @@ export default function Security() {
               iconColor="#219EBC"
               iconBgColor="rgba(33,158,188,0.15)"
               value={stats.threatsBlocked}
-              label="Threats Blocked Today"
-              trend="+12% this week"
+              label="今日阻止威胁"
+              trend="+12% 本周"
               trendColor="#06D6A0"
               index={2}
             />
@@ -176,8 +175,8 @@ export default function Security() {
               iconColor="#E29578"
               iconBgColor="rgba(226,149,120,0.15)"
               value={stats.policiesEnforced}
-              label="Policies Enforced"
-              trend="All active"
+              label="执行的策略"
+              trend="全部活跃"
               trendColor="#06D6A0"
               index={3}
             />
@@ -201,10 +200,10 @@ export default function Security() {
                     fontFamily: "'Outfit Variable', Outfit, sans-serif",
                   }}
                 >
-                  Security Events
+                  安全事件
                 </h2>
                 <p className="text-sm mt-1" style={{ color: 'rgba(255,255,255,0.4)' }}>
-                  {filteredEvents.length} event{filteredEvents.length !== 1 ? 's' : ''} found
+                  找到 {filteredEvents.length} 个事件{filteredEvents.length !== 1 ? '们' : ''}
                 </p>
               </div>
             </div>

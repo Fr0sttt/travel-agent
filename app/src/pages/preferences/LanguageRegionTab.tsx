@@ -39,12 +39,12 @@ const languages = [
 ];
 
 const currencies = [
-  { key: 'CNY', label: 'CNY (¥) - Chinese Yuan' },
-  { key: 'USD', label: 'USD ($) - US Dollar' },
-  { key: 'EUR', label: 'EUR (€) - Euro' },
-  { key: 'JPY', label: 'JPY (¥) - Japanese Yen' },
-  { key: 'GBP', label: 'GBP (£) - British Pound' },
-  { key: 'KRW', label: 'KRW (₩) - Korean Won' },
+  { key: 'CNY', label: 'CNY (¥) - 中文元' },
+  { key: 'USD', label: 'USD ($) - 美元' },
+  { key: 'EUR', label: 'EUR (€) - 欧元' },
+  { key: 'JPY', label: 'JPY (¥) - 日元' },
+  { key: 'GBP', label: 'GBP (£) - 英镑' },
+  { key: 'KRW', label: 'KRW (₩) - 韩元' },
 ];
 
 const dateFormats = [
@@ -91,10 +91,10 @@ export default function LanguageRegionTab() {
       {/* Header */}
       <motion.div variants={itemVariants}>
         <h2 className="font-display text-[2.5rem] font-semibold text-white leading-tight">
-          Language &amp; Region
+          语言和地区
         </h2>
         <p className="mt-2 text-base" style={{ color: 'rgba(255,255,255,0.5)' }}>
-          Set your language, region, and formatting preferences
+          设置您的语言、地区和格式偏好
         </p>
       </motion.div>
 
@@ -105,14 +105,14 @@ export default function LanguageRegionTab() {
         style={{ background: 'rgba(255,255,255,0.05)', backdropFilter: 'blur(16px)' }}
       >
         <Label className="text-xl font-semibold text-white block mb-1">
-          Interface Language
+          界面语言
         </Label>
         <p className="text-sm mb-4" style={{ color: 'rgba(255,255,255,0.4)' }}>
-          The language used throughout the WanderMind interface
+          在整个 WanderMind 界面中使用的语言
         </p>
         <Select value={language} onValueChange={setLanguage}>
           <SelectTrigger className="h-11 bg-[rgba(255,255,255,0.06)] border-[rgba(255,255,255,0.1)] text-white focus:border-[#219EBC] rounded-[8px] w-full max-w-md">
-            <SelectValue placeholder="Select language" />
+            <SelectValue placeholder="选择语言" />
           </SelectTrigger>
           <SelectContent className="bg-[#0A2463] border-[rgba(255,255,255,0.1)] text-white">
             {languages.map((lang) => (
@@ -131,14 +131,14 @@ export default function LanguageRegionTab() {
         style={{ background: 'rgba(255,255,255,0.05)', backdropFilter: 'blur(16px)' }}
       >
         <Label className="text-xl font-semibold text-white block mb-1">
-          Default Region
+          默认地区
         </Label>
         <p className="text-sm mb-4" style={{ color: 'rgba(255,255,255,0.5)' }}>
-          Used for currency, date formats, and local recommendations
+          用于货币、日期格式和本地建议
         </p>
         <Select value={region} onValueChange={setRegion}>
           <SelectTrigger className="h-11 bg-[rgba(255,255,255,0.06)] border-[rgba(255,255,255,0.1)] text-white focus:border-[#219EBC] rounded-[8px] w-full max-w-md">
-            <SelectValue placeholder="Select country" />
+            <SelectValue placeholder="选择国家" />
           </SelectTrigger>
           <SelectContent className="bg-[#0A2463] border-[rgba(255,255,255,0.1)] text-white">
             {popularCountries.map((country) => (
@@ -157,14 +157,14 @@ export default function LanguageRegionTab() {
         style={{ background: 'rgba(255,255,255,0.05)', backdropFilter: 'blur(16px)' }}
       >
         <Label className="text-xl font-semibold text-white block mb-1">
-          Preferred Currency
+          首选货币
         </Label>
         <p className="text-sm mb-4" style={{ color: 'rgba(255,255,255,0.4)' }}>
-          Currency used for displaying prices and budgets
+          用于显示价格和预算的货币
         </p>
         <Select value={currency} onValueChange={setCurrency}>
           <SelectTrigger className="h-11 bg-[rgba(255,255,255,0.06)] border-[rgba(255,255,255,0.1)] text-white focus:border-[#219EBC] rounded-[8px] w-full max-w-md">
-            <SelectValue placeholder="Select currency" />
+            <SelectValue placeholder="选择货币" />
           </SelectTrigger>
           <SelectContent className="bg-[#0A2463] border-[rgba(255,255,255,0.1)] text-white">
             {currencies.map((curr) => (
@@ -183,10 +183,10 @@ export default function LanguageRegionTab() {
         style={{ background: 'rgba(255,255,255,0.05)', backdropFilter: 'blur(16px)' }}
       >
         <Label className="text-xl font-semibold text-white block mb-1">
-          Date Format
+          日期格式
         </Label>
         <p className="text-sm mb-4" style={{ color: 'rgba(255,255,255,0.4)' }}>
-          How dates are displayed throughout the app
+          日期在整个应用中的显示方式
         </p>
         <div className="flex flex-wrap gap-3">
           {dateFormats.map((format) => (
@@ -213,9 +213,9 @@ export default function LanguageRegionTab() {
       >
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-xl font-semibold text-white">Time Format</h3>
+            <h3 className="text-xl font-semibold text-white">时间格式</h3>
             <p className="text-sm mt-1" style={{ color: 'rgba(255,255,255,0.4)' }}>
-              Use 24-hour time format
+              使用 24 小时制时间格式
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -242,9 +242,9 @@ export default function LanguageRegionTab() {
       >
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-xl font-semibold text-white">Distance Unit</h3>
+            <h3 className="text-xl font-semibold text-white">距离单位</h3>
             <p className="text-sm mt-1" style={{ color: 'rgba(255,255,255,0.4)' }}>
-              Display distances in kilometers or miles
+              以公里或英里显示距离
             </p>
           </div>
           <div className="flex gap-3">
@@ -280,9 +280,9 @@ export default function LanguageRegionTab() {
       >
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-xl font-semibold text-white">Temperature Unit</h3>
+            <h3 className="text-xl font-semibold text-white">温度单位</h3>
             <p className="text-sm mt-1" style={{ color: 'rgba(255,255,255,0.4)' }}>
-              Display temperatures in Celsius or Fahrenheit
+              以摄氏度或华氏度显示温度
             </p>
           </div>
           <div className="flex gap-3">
@@ -321,16 +321,16 @@ export default function LanguageRegionTab() {
           {saveState === 'saving' && (
             <span className="inline-flex items-center gap-2">
               <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              Saving...
+              保存中...
             </span>
           )}
           {saveState === 'saved' && (
             <span className="inline-flex items-center gap-2 text-[#06D6A0]">
               <Check className="w-4 h-4" />
-              Saved!
+              已保存！
             </span>
           )}
-          {saveState === 'idle' && 'Save Changes'}
+          {saveState === 'idle' && '保存更改'}
         </Button>
       </motion.div>
     </motion.div>

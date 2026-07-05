@@ -33,23 +33,23 @@ const itemVariants = {
 };
 
 const memoryOptions = [
-  { key: '30days', label: '30 days' },
-  { key: '90days', label: '90 days' },
-  { key: '1year', label: '1 year' },
-  { key: 'forever', label: 'Forever (until deleted)' },
+  { key: '30days', label: '30 天' },
+  { key: '90days', label: '90 天' },
+  { key: '1year', label: '1 年' },
+  { key: 'forever', label: '永久（直到删除）' },
 ];
 
 const dataSharingOptions = [
-  { key: 'travelHistory', label: 'Allow AI to access my travel history for better recommendations' },
-  { key: 'anonymizedData', label: 'Share anonymized data to improve the service' },
-  { key: 'thirdPartyMaps', label: 'Allow third-party map services for routing' },
+  { key: 'travelHistory', label: '允许 AI 访问我的旅行历史以获得更好的建议' },
+  { key: 'anonymizedData', label: '共享匿名数据以改进服务' },
+  { key: 'thirdPartyMaps', label: '允许第三方地图服务用于路由' },
 ];
 
 const confirmOptions = [
-  { key: 'bookings', label: 'Bookings' },
-  { key: 'payments', label: 'Payments' },
-  { key: 'dataExport', label: 'Data Export' },
-  { key: 'thirdPartySharing', label: 'Third-party Sharing' },
+  { key: 'bookings', label: '预订' },
+  { key: 'payments', label: '支付' },
+  { key: 'dataExport', label: '数据导出' },
+  { key: 'thirdPartySharing', label: '第三方共享' },
 ];
 
 export default function PrivacySafetyTab() {
@@ -71,7 +71,7 @@ export default function PrivacySafetyTab() {
   const [clearConfirmText, setClearConfirmText] = useState('');
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
 
-  const safetyLabels = ['Lenient', 'Moderate', 'Standard', 'Strict', 'Maximum'];
+  const safetyLabels = ['宽松', '中等', '标准', '严格', '最大'];
 
   const toggleDataSharing = (key: string) => {
     setDataSharing((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -82,7 +82,7 @@ export default function PrivacySafetyTab() {
   };
 
   const handleClearData = () => {
-    if (clearConfirmText === 'CLEAR ALL DATA') {
+    if (clearConfirmText === '清除所有数据') {
       setClearDialogOpen(false);
       setClearConfirmText('');
       setSaveState('saving');
@@ -106,10 +106,10 @@ export default function PrivacySafetyTab() {
       {/* Header */}
       <motion.div variants={itemVariants}>
         <h2 className="font-display text-[2.5rem] font-semibold text-white leading-tight">
-          Privacy &amp; Safety
+          隐私和安全
         </h2>
         <p className="mt-2 text-base" style={{ color: 'rgba(255,255,255,0.5)' }}>
-          Control your data and safety preferences
+          控制您的数据和安全偏好
         </p>
       </motion.div>
 
@@ -119,9 +119,9 @@ export default function PrivacySafetyTab() {
         className="mt-8 p-6 rounded-[12px] border border-[rgba(255,255,255,0.08)]"
         style={{ background: 'rgba(255,255,255,0.05)', backdropFilter: 'blur(16px)' }}
       >
-        <h3 className="text-xl font-semibold text-white">Conversation Memory</h3>
+        <h3 className="text-xl font-semibold text-white">对话内存</h3>
         <p className="text-sm mt-1" style={{ color: 'rgba(255,255,255,0.5)' }}>
-          How long should we keep your conversation history and derived preferences?
+          我们应该保留您的对话历史和衍生偏好多长时间？
         </p>
         <div className="mt-4 space-y-3">
           {memoryOptions.map((option) => (
@@ -157,7 +157,7 @@ export default function PrivacySafetyTab() {
         className="mt-5 p-6 rounded-[12px] border border-[rgba(255,255,255,0.08)]"
         style={{ background: 'rgba(255,255,255,0.05)', backdropFilter: 'blur(16px)' }}
       >
-        <h3 className="text-xl font-semibold text-white">Data Sharing</h3>
+        <h3 className="text-xl font-semibold text-white">数据共享</h3>
         <div className="mt-4 space-y-4">
           {dataSharingOptions.map((option) => (
             <div key={option.key} className="flex items-center justify-between">
@@ -178,9 +178,9 @@ export default function PrivacySafetyTab() {
         className="mt-5 p-6 rounded-[12px] border border-[rgba(255,255,255,0.08)]"
         style={{ background: 'rgba(255,255,255,0.05)', backdropFilter: 'blur(16px)' }}
       >
-        <h3 className="text-xl font-semibold text-white">Safety Sensitivity</h3>
+        <h3 className="text-xl font-semibold text-white">安全敏感度</h3>
         <p className="text-sm mt-1" style={{ color: 'rgba(255,255,255,0.5)' }}>
-          How strictly should we evaluate safety?
+          我们应该多严格地评估安全性？
         </p>
         <div className="mt-6 px-2">
           <Slider
@@ -214,9 +214,9 @@ export default function PrivacySafetyTab() {
       >
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-xl font-semibold text-white">Auto-confirm Low Risk</h3>
+            <h3 className="text-xl font-semibold text-white">自动确认低风险操作</h3>
             <p className="text-sm mt-1" style={{ color: 'rgba(255,255,255,0.4)' }}>
-              Automatically confirm low-risk actions without asking
+              无需询问即自动确认低风险操作
             </p>
           </div>
           <Switch
@@ -233,9 +233,9 @@ export default function PrivacySafetyTab() {
         className="mt-5 p-6 rounded-[12px] border border-[rgba(255,255,255,0.08)]"
         style={{ background: 'rgba(255,255,255,0.05)', backdropFilter: 'blur(16px)' }}
       >
-        <h3 className="text-xl font-semibold text-white">Require Confirmation For</h3>
+        <h3 className="text-xl font-semibold text-white">需要确认的操作</h3>
         <p className="text-sm mt-1" style={{ color: 'rgba(255,255,255,0.4)' }}>
-          These actions will always ask for your confirmation
+          这些操作将始终要求您的确认
         </p>
         <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
           {confirmOptions.map((option) => (
@@ -264,10 +264,10 @@ export default function PrivacySafetyTab() {
       >
         <div className="flex items-center gap-2">
           <AlertTriangle className="w-5 h-5 text-[#EF476F]" />
-          <h3 className="text-xl font-semibold text-[#EF476F]">Danger Zone</h3>
+          <h3 className="text-xl font-semibold text-[#EF476F]">危险区域</h3>
         </div>
         <p className="text-sm mt-2" style={{ color: 'rgba(255,255,255,0.5)' }}>
-          Once you clear all memory data, there is no going back. Please be certain.
+          清除所有内存数据后无法恢复。请确保您的选择。
         </p>
 
         <Dialog open={clearDialogOpen} onOpenChange={setClearDialogOpen}>
@@ -276,48 +276,46 @@ export default function PrivacySafetyTab() {
               variant="outline"
               className="mt-4 h-10 px-6 text-sm font-medium border-[#EF476F] text-[#EF476F] bg-transparent hover:bg-[#EF476F] hover:text-white transition-all rounded-[8px]"
             >
-              Clear All Memory Data
+              清除所有内存数据
             </Button>
           </DialogTrigger>
           <DialogContent className="bg-[#0A2463] border-[rgba(255,255,255,0.1)] text-white max-w-md">
             <DialogHeader>
               <DialogTitle className="font-display text-xl text-[#EF476F]">
-                Clear All Memory Data
+                清除所有内存数据
               </DialogTitle>
               <DialogDescription className="text-[rgba(255,255,255,0.5)]">
-                This action will permanently delete all your conversation history, preferences,
-                and saved travel data. This cannot be undone.
+                此操作将永久删除您的所有对话历史、偏好设置和已保存的旅行数据。这无法撤消。
               </DialogDescription>
             </DialogHeader>
             <div className="mt-4">
               <Label className="text-sm text-[#EDF6F9]">
-                Type <strong>CLEAR ALL DATA</strong> to confirm:
+                输入 <strong>清除所有数据</strong> 以确认：
               </Label>
               <input
                 type="text"
                 value={clearConfirmText}
                 onChange={(e) => setClearConfirmText(e.target.value)}
-                placeholder="CLEAR ALL DATA"
+                placeholder="清除所有数据"
                 className="mt-2 w-full h-11 bg-[rgba(255,255,255,0.06)] border border-[rgba(255,255,255,0.1)] text-white placeholder:text-[rgba(255,255,255,0.3)] focus:border-[#EF476F] rounded-[8px] px-4 text-sm"
               />
             </div>
             <DialogFooter className="mt-4">
               <Button
-                variant="outline"
                 onClick={() => {
                   setClearDialogOpen(false);
                   setClearConfirmText('');
                 }}
                 className="border-[rgba(255,255,255,0.2)] text-white bg-transparent hover:bg-[rgba(255,255,255,0.1)]"
               >
-                Cancel
+                取消
               </Button>
               <Button
                 onClick={handleClearData}
-                disabled={clearConfirmText !== 'CLEAR ALL DATA'}
+                disabled={clearConfirmText !== '清除所有数据'}
                 className="bg-[#EF476F] text-white hover:bg-[#d93d60] disabled:opacity-50"
               >
-                Clear All Data
+                清除所有数据
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -335,16 +333,16 @@ export default function PrivacySafetyTab() {
           {saveState === 'saving' && (
             <span className="inline-flex items-center gap-2">
               <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              Saving...
+              保存中...
             </span>
           )}
           {saveState === 'saved' && (
             <span className="inline-flex items-center gap-2 text-[#06D6A0]">
               <Check className="w-4 h-4" />
-              Saved!
+              已保存！
             </span>
           )}
-          {saveState === 'idle' && 'Save Changes'}
+          {saveState === 'idle' && '保存更改'}
         </Button>
       </motion.div>
     </motion.div>

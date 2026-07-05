@@ -2,6 +2,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -10,9 +11,12 @@ import { toast } from 'sonner';
 import type { ChatMessage, ToolCall } from '@/pages/app/mockData';
 import {
   checkHealth,
+  deleteSession as deleteSessionApi,
   getSession,
+  listSessions,
   streamChat,
   streamPlan,
+  type SessionSummary,
   type SessionState,
   type SSEvent,
 } from '@/lib/api';
@@ -23,6 +27,7 @@ type TravelStatus = 'idle' | 'processing' | 'needs_input' | 'error' | 'complete'
 interface TravelState {
   messages: ChatMessage[];
   sessionId: string | null;
+  sessions: SessionSummary[];
   status: TravelStatus;
   sessionState: SessionState | null;
   error: string | null;
@@ -32,6 +37,9 @@ interface TravelState {
 interface TravelContextValue extends TravelState {
   sendMessage: (text: string) => Promise<void>;
   resetSession: () => void;
+  refreshSessions: () => Promise<void>;
+  switchSession: (targetSessionId: string) => Promise<void>;
+  deleteSession: (targetSessionId: string) => Promise<void>;
   clearError: () => void;
   checkBackendHealth: () => Promise<void>;
   dashboardData: DashboardData;
@@ -74,6 +82,7 @@ function mapToolCalls(toolCalls: unknown[]): ToolCall[] {
 export function TravelProvider({ children }: { children: React.ReactNode }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [status, setStatus] = useState<TravelStatus>('idle');
   const [sessionState, setSessionState] = useState<SessionState | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -81,6 +90,7 @@ export function TravelProvider({ children }: { children: React.ReactNode }) {
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const assistantMessageIdRef = useRef<string | null>(null);
+  const requestIdRef = useRef(0);
 
   const dashboardData = useMemo(() => {
     if (!sessionState) {
@@ -94,6 +104,7 @@ export function TravelProvider({ children }: { children: React.ReactNode }) {
         safetyEvents: [],
         toolCallLogs: [],
         riskAlerts: [],
+        routePolyline: [],
       };
     }
     return buildDashboardData(sessionState);
@@ -132,6 +143,85 @@ export function TravelProvider({ children }: { children: React.ReactNode }) {
     };
     setMessages((prev) => [...prev, msg]);
   }, []);
+
+  const refreshSessions = useCallback(async () => {
+    try {
+      const payload = await listSessions();
+      setSessions(payload.sessions || []);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error('无法加载会话列表', { description: message });
+    }
+  }, []);
+
+  const loadSession = useCallback(async (targetSessionId: string) => {
+    const state = await getSession(targetSessionId);
+    setSessionId(targetSessionId);
+    setSessionState(state);
+
+    const history = Array.isArray(state.messages) ? state.messages : [];
+    const restoredMessages: ChatMessage[] = history.map((item, idx) => ({
+      id: `${targetSessionId}-${idx}-${item.timestamp || idx}`,
+      role: item.role === 'assistant' ? 'agent' : 'user',
+      content: item.content,
+      timestamp: item.timestamp
+        ? new Date(String(item.timestamp)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        : nowTimestamp(),
+      reasoningChain: [],
+      toolCalls: [],
+      isStreaming: false,
+    }));
+
+    setMessages(restoredMessages);
+    assistantMessageIdRef.current = null;
+    setStatus(state.needs_clarification ? 'needs_input' : restoredMessages.length > 0 ? 'complete' : 'idle');
+    setError(null);
+  }, []);
+
+  const switchSession = useCallback(async (targetSessionId: string) => {
+    if (!targetSessionId || targetSessionId === sessionId) return;
+    try {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+      requestIdRef.current += 1;
+      setStatus('processing');
+      await loadSession(targetSessionId);
+      await refreshSessions();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setStatus('error');
+      setError(message);
+      toast.error('切换会话失败', { description: message });
+    }
+  }, [loadSession, refreshSessions, sessionId]);
+
+  const deleteSession = useCallback(async (targetSessionId: string) => {
+    if (!targetSessionId) return;
+    try {
+      await deleteSessionApi(targetSessionId);
+      // 删除的正是当前打开的会话，清空聊天视图，避免继续展示已删除的内容
+      if (targetSessionId === sessionId) {
+        if (abortControllerRef.current) {
+          abortControllerRef.current.abort();
+          abortControllerRef.current = null;
+        }
+        requestIdRef.current += 1;
+        setMessages([]);
+        setSessionId(null);
+        setSessionState(null);
+        setStatus('idle');
+        setError(null);
+        assistantMessageIdRef.current = null;
+      }
+      await refreshSessions();
+      toast.success('会话已删除');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error('删除会话失败', { description: message });
+    }
+  }, [refreshSessions, sessionId]);
 
   const handleEvent = useCallback(async (event: SSEvent) => {
     switch (event.type) {
@@ -181,11 +271,16 @@ export function TravelProvider({ children }: { children: React.ReactNode }) {
         break;
       }
       case 'complete': {
+        console.log(
+          `[handleEvent] 收到 complete 事件 session_id=${event.session_id} itinerary长度=${event.itinerary?.length ?? 0} assistantMessageId=${assistantMessageIdRef.current}`,
+        );
         setSessionId(event.session_id);
         setStatus('complete');
         updateAssistantMessage((msg) => ({
           ...msg,
-          content: event.message || '行程规划完成！',
+          // itinerary 是完整的行程 Markdown，event.message 只是固定的状态提示
+          // ("行程规划完成！")，之前直接用 message 会把完整行程内容丢掉。
+          content: event.itinerary || event.message || '行程规划完成！',
           isStreaming: false,
         }));
         try {
@@ -199,6 +294,7 @@ export function TravelProvider({ children }: { children: React.ReactNode }) {
             }));
           }
           toast.success('行程规划完成');
+          await refreshSessions();
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           toast.error('无法获取行程详情', { description: message });
@@ -217,17 +313,25 @@ export function TravelProvider({ children }: { children: React.ReactNode }) {
         break;
       }
     }
-  }, [updateAssistantMessage]);
+  }, [updateAssistantMessage, refreshSessions]);
 
   const sendMessage = useCallback(
     async (text: string) => {
       if (!text.trim()) return;
+
+      // 调试用：定位"一次发送产生两条完整回复"的问题，确认 sendMessage
+      // 是否被意外调用了多次（双击、Enter+按钮竞态等）。
+      console.log(
+        `[sendMessage] 调用 requestId(调用前)=${requestIdRef.current} text=${text.slice(0, 30)} sessionId=${sessionId} isProcessing(status)=${status}`,
+      );
 
       // Cancel any in-flight request
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
       const controller = new AbortController();
+      const requestId = requestIdRef.current + 1;
+      requestIdRef.current = requestId;
       abortControllerRef.current = controller;
 
       appendUserMessage(text);
@@ -251,6 +355,7 @@ export function TravelProvider({ children }: { children: React.ReactNode }) {
         }
       } catch (err) {
         if ((err as Error).name === 'AbortError') return;
+        if (requestIdRef.current !== requestId) return;
         const message = err instanceof Error ? err.message : String(err);
         setStatus('error');
         setError(message);
@@ -261,7 +366,10 @@ export function TravelProvider({ children }: { children: React.ReactNode }) {
         }));
         toast.error('网络错误', { description: message });
       } finally {
-        abortControllerRef.current = null;
+        if (requestIdRef.current === requestId) {
+          abortControllerRef.current = null;
+          setStatus((prev) => (prev === 'processing' ? 'idle' : prev));
+        }
       }
     },
     [sessionId, appendUserMessage, appendAssistantMessage, handleEvent, updateAssistantMessage],
@@ -272,6 +380,7 @@ export function TravelProvider({ children }: { children: React.ReactNode }) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
+    requestIdRef.current += 1;
     setMessages([]);
     setSessionId(null);
     setSessionState(null);
@@ -294,16 +403,24 @@ export function TravelProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  useEffect(() => {
+    void refreshSessions();
+  }, [refreshSessions]);
+
   const value = useMemo<TravelContextValue>(
     () => ({
       messages,
       sessionId,
+      sessions,
       status,
       sessionState,
       error,
       isBackendHealthy,
       sendMessage,
       resetSession,
+      refreshSessions,
+      switchSession,
+      deleteSession,
       clearError,
       checkBackendHealth,
       dashboardData,
@@ -311,12 +428,16 @@ export function TravelProvider({ children }: { children: React.ReactNode }) {
     [
       messages,
       sessionId,
+      sessions,
       status,
       sessionState,
       error,
       isBackendHealthy,
       sendMessage,
       resetSession,
+      refreshSessions,
+      switchSession,
+      deleteSession,
       clearError,
       checkBackendHealth,
       dashboardData,

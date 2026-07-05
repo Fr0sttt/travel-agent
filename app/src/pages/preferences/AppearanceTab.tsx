@@ -24,50 +24,50 @@ const itemVariants = {
 const themes = [
   {
     key: 'deep-sea',
-    label: 'Deep Sea',
-    description: 'Default dark blue',
+    label: '深蓝海',
+    description: '默认深蓝色',
     icon: Monitor,
     preview: 'linear-gradient(135deg, #0A2463 0%, #1A659E 50%, #219EBC 100%)',
   },
   {
     key: 'midnight',
-    label: 'Midnight',
-    description: 'Pure dark',
+    label: '午夜',
+    description: '纯黑色',
     icon: Moon,
     preview: 'linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 50%, #16213e 100%)',
   },
   {
     key: 'ocean-light',
-    label: 'Ocean Light',
-    description: 'Light blue',
+    label: '海洋浅色',
+    description: '浅蓝色',
     icon: Sun,
     preview: 'linear-gradient(135deg, #e0f7fa 0%, #b2ebf2 50%, #80deea 100%)',
   },
 ];
 
 const densityOptions = [
-  { key: 'compact', label: 'Compact' },
-  { key: 'comfortable', label: 'Comfortable' },
-  { key: 'spacious', label: 'Spacious' },
+  { key: 'compact', label: '紧凑' },
+  { key: 'comfortable', label: '舒适' },
+  { key: 'spacious', label: '宽敞' },
 ];
 
 const fontSizeOptions = [
-  { key: 'small', label: 'Small', scale: 0.9 },
-  { key: 'medium', label: 'Medium', scale: 1.0 },
-  { key: 'large', label: 'Large', scale: 1.1 },
+  { key: 'small', label: '小', scale: 0.9 },
+  { key: 'medium', label: '中', scale: 1.0 },
+  { key: 'large', label: '大', scale: 1.1 },
 ];
 
 const accentColors = [
-  { key: 'blue', label: 'Blue', hex: '#219EBC' },
-  { key: 'green', label: 'Green', hex: '#2EC4B6' },
-  { key: 'coral', label: 'Coral', hex: '#E29578' },
-  { key: 'purple', label: 'Purple', hex: '#9B5DE5' },
+  { key: 'blue', label: '蓝色', hex: '#219EBC' },
+  { key: 'green', label: '绿色', hex: '#2EC4B6' },
+  { key: 'coral', label: '珊瑚色', hex: '#E29578' },
+  { key: 'purple', label: '紫色', hex: '#9B5DE5' },
 ];
 
 const animationOptions = [
-  { key: 'full', label: 'Full' },
-  { key: 'reduced', label: 'Reduced' },
-  { key: 'none', label: 'None' },
+  { key: 'full', label: '完整' },
+  { key: 'reduced', label: '减弱' },
+  { key: 'none', label: '无' },
 ];
 
 export default function AppearanceTab() {
@@ -95,10 +95,10 @@ export default function AppearanceTab() {
       {/* Header */}
       <motion.div variants={itemVariants}>
         <h2 className="font-display text-[2.5rem] font-semibold text-white leading-tight">
-          Appearance
+          外观
         </h2>
         <p className="mt-2 text-base" style={{ color: 'rgba(255,255,255,0.5)' }}>
-          Customize how WanderMind looks and feels
+          自定义 WanderMind 的外观和感受
         </p>
       </motion.div>
 
@@ -108,7 +108,7 @@ export default function AppearanceTab() {
         className="mt-8 p-6 rounded-[12px] border border-[rgba(255,255,255,0.08)]"
         style={{ background: 'rgba(255,255,255,0.05)', backdropFilter: 'blur(16px)' }}
       >
-        <h3 className="text-xl font-semibold text-white">Theme</h3>
+        <h3 className="text-xl font-semibold text-white">主题</h3>
         <div className="mt-4 flex flex-wrap gap-4">
           {themes.map((t) => {
             const Icon = t.icon;
@@ -145,9 +145,9 @@ export default function AppearanceTab() {
         className="mt-5 p-6 rounded-[12px] border border-[rgba(255,255,255,0.08)]"
         style={{ background: 'rgba(255,255,255,0.05)', backdropFilter: 'blur(16px)' }}
       >
-        <h3 className="text-xl font-semibold text-white">Interface Density</h3>
+        <h3 className="text-xl font-semibold text-white">界面密度</h3>
         <p className="text-sm mt-1" style={{ color: 'rgba(255,255,255,0.4)' }}>
-          Control how compact or spacious the interface feels
+          控制界面的紧凑度或宽敞度
         </p>
         <div className="mt-4 flex flex-wrap gap-3">
           {densityOptions.map((option) => (
@@ -172,9 +172,9 @@ export default function AppearanceTab() {
         className="mt-5 p-6 rounded-[12px] border border-[rgba(255,255,255,0.08)]"
         style={{ background: 'rgba(255,255,255,0.05)', backdropFilter: 'blur(16px)' }}
       >
-        <h3 className="text-xl font-semibold text-white">Font Size</h3>
+        <h3 className="text-xl font-semibold text-white">字体大小</h3>
         <p className="text-sm mt-1" style={{ color: 'rgba(255,255,255,0.4)' }}>
-          Adjust text size across the interface
+          调整整个界面的文本大小
         </p>
 
         {/* Font Scale Slider */}
@@ -215,13 +215,13 @@ export default function AppearanceTab() {
         {/* Live Preview */}
         <div className="mt-6 p-4 rounded-[8px] bg-[rgba(0,0,0,0.2)] border border-[rgba(255,255,255,0.06)]">
           <p className="text-xs mb-2" style={{ color: 'rgba(255,255,255,0.3)' }}>
-            Live Preview
+            实时预览
           </p>
           <p
             className="text-white"
             style={{ fontSize: `${previewScale}rem`, transition: 'font-size 0.3s ease' }}
           >
-            The quick brown fox jumps over the lazy dog.
+            快速的棕色狐狸跳过懒狗。
           </p>
           <p
             className="mt-1"
@@ -231,7 +231,7 @@ export default function AppearanceTab() {
               transition: 'font-size 0.3s ease',
             }}
           >
-            Pack your bags — your next adventure awaits in Tokyo, Japan!
+            收拾行囊——您在东京、日本的下一场冒险在等待您！
           </p>
         </div>
       </motion.div>
@@ -242,9 +242,9 @@ export default function AppearanceTab() {
         className="mt-5 p-6 rounded-[12px] border border-[rgba(255,255,255,0.08)]"
         style={{ background: 'rgba(255,255,255,0.05)', backdropFilter: 'blur(16px)' }}
       >
-        <h3 className="text-xl font-semibold text-white">Accent Color</h3>
+        <h3 className="text-xl font-semibold text-white">强调色</h3>
         <p className="text-sm mt-1" style={{ color: 'rgba(255,255,255,0.4)' }}>
-          Choose your preferred accent color
+          选择您首选的强调色
         </p>
         <div className="mt-4 flex flex-wrap gap-4">
           {accentColors.map((color) => (
@@ -273,9 +273,9 @@ export default function AppearanceTab() {
         className="mt-5 p-6 rounded-[12px] border border-[rgba(255,255,255,0.08)]"
         style={{ background: 'rgba(255,255,255,0.05)', backdropFilter: 'blur(16px)' }}
       >
-        <h3 className="text-xl font-semibold text-white">Animation Level</h3>
+        <h3 className="text-xl font-semibold text-white">动画级别</h3>
         <p className="text-sm mt-1" style={{ color: 'rgba(255,255,255,0.4)' }}>
-          Control the amount of motion in the interface
+          控制界面中的运动量
         </p>
         <div className="mt-4 flex flex-wrap gap-3">
           {animationOptions.map((option) => (
@@ -305,16 +305,16 @@ export default function AppearanceTab() {
           {saveState === 'saving' && (
             <span className="inline-flex items-center gap-2">
               <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              Saving...
+              保存中...
             </span>
           )}
           {saveState === 'saved' && (
             <span className="inline-flex items-center gap-2 text-[#06D6A0]">
               <Check className="w-4 h-4" />
-              Saved!
+              已保存！
             </span>
           )}
-          {saveState === 'idle' && 'Save Changes'}
+          {saveState === 'idle' && '保存更改'}
         </Button>
       </motion.div>
     </motion.div>

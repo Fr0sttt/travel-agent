@@ -6,9 +6,9 @@ import { useTravel } from '@/contexts/TravelContext';
 import type { SafetyEvent } from './mockData';
 
 const severityConfig: Record<string, { icon: React.ElementType; color: string; border: string; label: string }> = {
-  info: { icon: Info, color: '#06D6A0', border: '#06D6A0', label: 'Info' },
-  warning: { icon: AlertTriangle, color: '#FFD166', border: '#FFD166', label: 'Warning' },
-  critical: { icon: AlertCircle, color: '#EF476F', border: '#EF476F', label: 'Critical' },
+  info: { icon: Info, color: '#06D6A0', border: '#06D6A0', label: '信息' },
+  warning: { icon: AlertTriangle, color: '#FFD166', border: '#FFD166', label: '警告' },
+  critical: { icon: AlertCircle, color: '#EF476F', border: '#EF476F', label: '严重' },
 };
 
 const statusConfig: Record<string, { color: string; bg: string }> = {

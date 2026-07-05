@@ -17,12 +17,12 @@ import AppearanceTab from './preferences/AppearanceTab';
 import LanguageRegionTab from './preferences/LanguageRegionTab';
 
 const navItems = [
-  { key: 'profile', label: 'Profile', icon: User },
-  { key: 'travel', label: 'Travel Preferences', icon: Heart },
-  { key: 'notifications', label: 'Notifications', icon: Bell },
-  { key: 'privacy', label: 'Privacy & Safety', icon: Shield },
-  { key: 'appearance', label: 'Appearance', icon: Palette },
-  { key: 'language', label: 'Language & Region', icon: Globe },
+  { key: 'profile', label: '个人资料', icon: User },
+  { key: 'travel', label: '旅行偏好', icon: Heart },
+  { key: 'notifications', label: '通知', icon: Bell },
+  { key: 'privacy', label: '隐私和安全', icon: Shield },
+  { key: 'appearance', label: '外观', icon: Palette },
+  { key: 'language', label: '语言和地区', icon: Globe },
 ];
 
 const tabContentVariants = {
@@ -77,11 +77,11 @@ export default function Preferences() {
               className="font-display text-[2.5rem] sm:text-[3.5rem] font-bold text-white leading-tight"
               style={{ letterSpacing: '-0.02em' }}
             >
-              Settings
+              设置
             </h1>
           </div>
           <p className="mt-2 text-base sm:text-lg" style={{ color: 'rgba(255,255,255,0.5)' }}>
-            Customize your WanderMind experience
+            自定义您的 WanderMind 体验
           </p>
         </motion.div>
 

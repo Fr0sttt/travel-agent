@@ -3,10 +3,10 @@ import { Link } from 'react-router';
 import { Menu, X, Compass } from 'lucide-react';
 
 const navLinks = [
-  { label: 'Home', path: '/' },
-  { label: 'App', path: '/app' },
-  { label: 'Preferences', path: '/preferences' },
-  { label: 'Security', path: '/security' },
+  { label: '首页', path: '/' },
+  { label: '应用', path: '/app' },
+  { label: '偏好设置', path: '/preferences' },
+  { label: '安全', path: '/security' },
 ];
 
 export default function Navbar() {
@@ -44,7 +44,7 @@ export default function Navbar() {
             className="inline-flex items-center justify-center px-6 py-2.5 rounded-full text-sm font-semibold text-white transition-all duration-300 hover:scale-105 hover:shadow-glow-coral"
             style={{ background: '#E29578' }}
           >
-            Start Planning
+            开始规划
           </Link>
         </div>
 
@@ -78,7 +78,7 @@ export default function Navbar() {
               className="mt-4 inline-flex items-center justify-center px-8 py-3 rounded-full text-base font-semibold text-white transition-all duration-300 hover:scale-105"
               style={{ background: '#E29578' }}
             >
-              Start Planning
+              开始规划
             </Link>
           </div>
         </div>

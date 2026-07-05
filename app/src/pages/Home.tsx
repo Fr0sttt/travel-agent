@@ -286,7 +286,7 @@ function HeroSection() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8, ease: easeOutExpo, delay: 0.5 }}
         >
-          Travel Smarter with Transparent AI
+          更智能的旅行规划，透明的AI决策
         </motion.h1>
 
         <motion.p
@@ -296,7 +296,7 @@ function HeroSection() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6, ease: easeOutExpo, delay: 1.0 }}
         >
-          WanderMind plans your perfect trip while showing exactly how it thinks — every tool call, every memory, every decision.
+          WanderMind为您规划完美旅行，并清晰展示思考过程——每一次工具调用、每一段记忆、每一个决定。
         </motion.p>
 
         <motion.div
@@ -310,13 +310,13 @@ function HeroSection() {
             className="inline-flex items-center justify-center px-8 py-3.5 rounded-full text-white font-semibold text-lg transition-all duration-300 hover:scale-105 hover:shadow-glow-coral"
             style={{ background: '#E29578' }}
           >
-            Start Planning
+            开始规划
           </Link>
           <a
             href="#how-it-works"
             className="inline-flex items-center justify-center px-8 py-3.5 rounded-full text-white font-semibold text-lg border border-white/30 transition-all duration-300 hover:bg-white/10"
           >
-            See How It Works
+            查看工作流程
           </a>
         </motion.div>
       </div>
@@ -341,9 +341,9 @@ function ProblemSection() {
   const inView = useInView(ref, { once: true, margin: '-20%' });
 
   const painPoints = [
-    { icon: EyeOff, title: 'Opaque Reasoning', desc: 'No visibility into how the AI made its decisions or what data it used' },
-    { icon: Database, title: 'Hidden Assumptions', desc: 'Your preferences might be ignored without you ever knowing' },
-    { icon: Shield, title: 'Safety Blindspots', desc: 'Critical safety considerations may be overlooked silently' },
+    { icon: EyeOff, title: '推理过程不透明', desc: '无法了解AI如何做出决定或使用了哪些数据' },
+    { icon: Database, title: '隐藏的假设', desc: '您的偏好可能被忽视，而您甚至不知道' },
+    { icon: Shield, title: '安全盲点', desc: '关键安全考虑可能被无声地忽视' },
   ];
 
   return (
@@ -357,13 +357,13 @@ function ProblemSection() {
           transition={{ duration: 0.7, ease: easeOutExpo }}
         >
           <span className="text-xs font-mono uppercase tracking-[0.1em] text-[#2EC4B6]">
-            THE PROBLEM
+            问题所在
           </span>
           <h2 className="mt-4 font-display text-3xl sm:text-4xl md:text-[2.5rem] font-semibold text-[#0A2463] leading-[1.2] tracking-[-0.01em]">
-            Most AI Travel Agents Are Black Boxes
+            大多数AI旅行代理是黑匣子
           </h2>
           <p className="mt-5 text-base text-[rgba(10,36,99,0.7)] leading-relaxed max-w-[480px]">
-            You ask for a trip plan and get a perfect itinerary — but you have no idea how it was made. Was your budget respected? Are the recommendations based on real data? Can you trust the safety of the suggestions?
+            您请求一个行程计划，得到一个完美的行程表——但您不知道它是如何制作的。预算被尊重了吗？建议基于真实数据吗？您能相信建议的安全性吗？
           </p>
 
           {/* Stat Card */}
@@ -373,7 +373,7 @@ function ProblemSection() {
               73%
             </div>
             <p className="mt-2 text-sm text-[rgba(10,36,99,0.6)]">
-              of travelers don&apos;t trust AI-generated itineraries without transparency
+              73%的旅客不相信没有透明度的AI生成的行程
             </p>
           </div>
         </motion.div>
@@ -418,7 +418,7 @@ function SolutionSection() {
           animate={inView ? { opacity: 1, y: 0 } : {}}
           transition={{ duration: 0.6, ease: easeOutExpo }}
         >
-          THE SOLUTION
+          解决方案
         </motion.span>
 
         <motion.h2
@@ -427,7 +427,7 @@ function SolutionSection() {
           animate={inView ? { opacity: 1, y: 0 } : {}}
           transition={{ duration: 0.6, ease: easeOutExpo, delay: 0.1 }}
         >
-          Full Transparency, Start to Finish
+          完全透明，从始至终
         </motion.h2>
 
         <motion.p
@@ -437,7 +437,7 @@ function SolutionSection() {
           animate={inView ? { opacity: 1, y: 0 } : {}}
           transition={{ duration: 0.6, ease: easeOutExpo, delay: 0.2 }}
         >
-          WanderMind exposes every step of its reasoning — from tool calls to memory retrieval to uncertainty disclosure — so you can trust and refine your travel plans.
+          WanderMind公开其所有推理步骤——从工具调用到记忆检索到不确定性披露——让您可以信任并优化您的旅行计划。
         </motion.p>
 
         {/* Rotating Cube */}
@@ -474,12 +474,12 @@ function RotatingCube() {
   }, []);
 
   const faceIcons = [
-    { icon: MessageSquare, label: 'Chat' },
-    { icon: MapPin, label: 'Map' },
-    { icon: Brain, label: 'Reasoning' },
-    { icon: Shield, label: 'Safety' },
-    { icon: Compass, label: 'Planning' },
-    { icon: Database, label: 'Memory' },
+    { icon: MessageSquare, label: '聊天' },
+    { icon: MapPin, label: '地图' },
+    { icon: Brain, label: '推理' },
+    { icon: Shield, label: '安全' },
+    { icon: Compass, label: '规划' },
+    { icon: Database, label: '记忆' },
   ];
 
   const transforms = [
@@ -525,11 +525,11 @@ function LiveDemoSection() {
   const inView = useInView(ref, { once: true, margin: '-25%' });
 
   const metrics = [
-    { label: 'Constraint Satisfaction', value: 94, color: '#06D6A0' },
-    { label: 'Route Rationality', value: 87, color: '#06D6A0' },
-    { label: 'Source Attribution', value: 100, color: '#06D6A0' },
-    { label: 'Uncertainty Disclosure', value: 78, color: '#FFD166' },
-    { label: 'Safety Compliance', value: 96, color: '#06D6A0' },
+    { label: '约束满足度', value: 94, color: '#06D6A0' },
+    { label: '路线合理性', value: 87, color: '#06D6A0' },
+    { label: '来源可溯性', value: 100, color: '#06D6A0' },
+    { label: '不确定性披露', value: 78, color: '#FFD166' },
+    { label: '安全合规性', value: 96, color: '#06D6A0' },
   ];
 
   return (
@@ -542,13 +542,13 @@ function LiveDemoSection() {
           transition={{ duration: 0.6, ease: easeOutExpo }}
         >
           <span className="text-xs font-mono uppercase tracking-[0.1em] text-[#1A659E]">
-            LIVE DEMONSTRATION
+            实时演示
           </span>
           <h2 className="mt-3 font-display text-3xl sm:text-4xl md:text-[2.5rem] font-semibold text-[#0A2463] leading-[1.2] tracking-[-0.01em]">
-            See the AI Think in Real-Time
+            实时观看AI的思考过程
           </h2>
           <p className="mt-3 text-base text-[rgba(10,36,99,0.6)] max-w-[600px]">
-            Watch every tool call, memory retrieval, and reasoning step as your itinerary comes to life.
+            观看每一次工具调用、每一次记忆检索和每一个推理步骤，看您的行程如何逐步生成。
           </p>
         </motion.div>
 
@@ -574,7 +574,7 @@ function LiveDemoSection() {
                   <span className="text-white text-xs font-bold">U</span>
                 </div>
                 <div className="p-3 rounded-xl text-sm text-[#0A2463]" style={{ background: 'rgba(10,36,99,0.05)' }}>
-                  I&apos;d like to plan a 5-day trip to Tokyo with a budget of $2,000. I love temples, ramen, and photography.
+                  我想规划一个5天的东京之旅，预算$2,000。我喜欢寺庙、拉面和摄影。
                 </div>
               </div>
 
@@ -584,7 +584,7 @@ function LiveDemoSection() {
                   <Sparkles className="w-4 h-4 text-white" />
                 </div>
                 <div className="p-3 rounded-xl text-sm text-white bg-[#1A659E]">
-                  Great choice! I&apos;ll plan a Tokyo trip for you. Let me start by checking safety conditions and searching for attractions...
+                  很好的选择！我为您规划一个东京之旅。让我先检查安全条件并搜索景点...
                 </div>
               </div>
 
@@ -605,7 +605,7 @@ function LiveDemoSection() {
             >
               <div className="flex items-center gap-2 mb-4">
                 <Wrench className="w-5 h-5 text-[#0A2463]" />
-                <h3 className="font-display text-xl font-semibold text-[#0A2463]">Tool Calls</h3>
+                <h3 className="font-display text-xl font-semibold text-[#0A2463]">工具调用</h3>
               </div>
 
               <div className="space-y-3">
@@ -635,7 +635,7 @@ function LiveDemoSection() {
             >
               <div className="flex items-center gap-2 mb-4">
                 <BarChart3 className="w-5 h-5 text-[#0A2463]" />
-                <h3 className="font-display text-xl font-semibold text-[#0A2463]">Evaluation Metrics</h3>
+                <h3 className="font-display text-xl font-semibold text-[#0A2463]">评估指标</h3>
               </div>
 
               <div className="space-y-3">
@@ -684,12 +684,12 @@ function FeatureGridSection() {
   const inView = useInView(ref, { once: true, margin: '-20%' });
 
   const features = [
-    { icon: MessageSquare, title: 'Intelligent Chat', desc: 'Converse naturally with your AI travel agent. Describe your dream trip in your own words and watch it understand your intent.' },
-    { icon: Calendar, title: 'Visual Itinerary', desc: 'Your trip displayed as a beautiful timeline with daily activities, time estimates, and location markers at a glance.' },
-    { icon: Map, title: 'Interactive Map', desc: 'See every point of interest on an interactive map with optimized routes, walking directions, and travel times.' },
-    { icon: Eye, title: 'Explainable AI', desc: 'Every decision is explained. See the reasoning chain, tool calls, memory usage, and confidence scores for full transparency.' },
-    { icon: Shield, title: 'Safety First', desc: 'Real-time safety checks against global databases. Every recommendation is vetted for current conditions and alerts.' },
-    { icon: Brain, title: 'Memory & Learning', desc: 'The agent remembers your preferences across sessions, building a travel profile that improves every recommendation.' },
+    { icon: MessageSquare, title: '智能聊天', desc: '与您的AI旅行代理自然对话。用您自己的话描述您梦想的旅行，观看它理解您的意图。' },
+    { icon: Calendar, title: '可视化行程', desc: '您的旅行显示为漂亮的时间线，包含每日活动、时间估计和位置标记。' },
+    { icon: Map, title: '交互式地图', desc: '在交互式地图上查看每个景点，包含优化路线、步行方向和旅行时间。' },
+    { icon: Eye, title: '可解释的AI', desc: '每个决定都有解释。查看推理链、工具调用、记忆使用和置信度分数，获得完全的透明度。' },
+    { icon: Shield, title: '安全第一', desc: '针对全球数据库的实时安全检查。每条建议都经过审查以了解当前条件和警告。' },
+    { icon: Brain, title: '记忆和学习', desc: '代理在会话之间记住您的偏好，建立旅行档案，改进每条建议。' },
   ];
 
   return (
@@ -702,7 +702,7 @@ function FeatureGridSection() {
             animate={inView ? { opacity: 1, y: 0 } : {}}
             transition={{ duration: 0.6, ease: easeOutExpo }}
           >
-            FEATURES
+            功能特性
           </motion.span>
           <motion.h2
             className="mt-4 font-display text-3xl sm:text-4xl md:text-[3.5rem] font-bold text-white leading-[1.15] tracking-[-0.02em] max-w-[700px] mx-auto"
@@ -710,7 +710,7 @@ function FeatureGridSection() {
             animate={inView ? { opacity: 1, y: 0 } : {}}
             transition={{ duration: 0.6, ease: easeOutExpo, delay: 0.1 }}
           >
-            Everything You Need to Plan with Confidence
+            自信规划所需的一切
           </motion.h2>
         </div>
 
@@ -734,7 +734,7 @@ function FeatureGridSection() {
                 {feature.desc}
               </p>
               <span className="mt-4 inline-block text-sm text-[#8ECAE6] group-hover:text-[#E29578] transition-colors duration-300">
-                Learn more &rarr;
+                了解更多 &rarr;
               </span>
             </motion.div>
           ))}
@@ -751,10 +751,10 @@ function HowItWorksSection() {
   const inView = useInView(ref, { once: true, margin: '-30%' });
 
   const steps = [
-    { title: 'Describe Your Trip', desc: 'Tell the AI where you want to go, your budget, travel dates, interests, and any constraints. The more detail, the better the plan.' },
-    { title: 'AI Reasoning in Action', desc: 'Watch as the agent calls tools, searches databases, retrieves memories, and evaluates options — all visible in real-time.' },
-    { title: 'Review & Refine', desc: 'Get a complete itinerary with map visualization, evaluation scores, and explanation panels. Adjust anything you want.' },
-    { title: 'Travel with Confidence', desc: 'Export your itinerary, receive safety alerts, and enjoy a trip planned with full transparency and AI-powered intelligence.' },
+    { title: '描述您的旅行', desc: '告诉AI您想去的地方、预算、旅行日期、兴趣和任何约束。细节越多，计划越好。' },
+    { title: 'AI推理过程', desc: '观看代理调用工具、搜索数据库、检索记忆和评估选项——所有过程都实时可见。' },
+    { title: '审查并优化', desc: '获得完整的行程表，包括地图可视化、评估分数和解释面板。根据需要调整任何内容。' },
+    { title: '自信地旅行', desc: '导出您的行程表、接收安全提醒并享受通过完全透明和AI驱动的智能规划的旅行。' },
   ];
 
   return (
@@ -767,7 +767,7 @@ function HowItWorksSection() {
             animate={inView ? { opacity: 1, y: 0 } : {}}
             transition={{ duration: 0.6, ease: easeOutExpo }}
           >
-            HOW IT WORKS
+            工作流程
           </motion.span>
           <motion.h2
             className="mt-4 font-display text-3xl sm:text-4xl md:text-[2.5rem] font-semibold text-[#0A2463] leading-[1.2] tracking-[-0.01em]"
@@ -775,7 +775,7 @@ function HowItWorksSection() {
             animate={inView ? { opacity: 1, y: 0 } : {}}
             transition={{ duration: 0.6, ease: easeOutExpo, delay: 0.1 }}
           >
-            From Conversation to Itinerary in 4 Steps
+            从对话到行程表的4个步骤
           </motion.h2>
         </div>
 
@@ -830,17 +830,17 @@ function MetricsDashboardSection() {
   const inView = useInView(ref, { once: true, margin: '-25%' });
 
   const metrics = [
-    { icon: Target, label: 'Constraint Satisfaction', value: 94, badge: 'green' },
-    { icon: Route, label: 'Route Rationality', value: 87, badge: 'green' },
-    { icon: BookOpen, label: 'Source Attribution', value: 100, badge: 'green' },
-    { icon: AlertTriangle, label: 'Uncertainty Disclosure', value: 78, badge: 'amber' },
-    { icon: ShieldCheck, label: 'Safety Compliance', value: 96, badge: 'green' },
+    { icon: Target, label: '约束满足度', value: 94, badge: 'green' },
+    { icon: Route, label: '路线合理性', value: 87, badge: 'green' },
+    { icon: BookOpen, label: '来源可溯性', value: 100, badge: 'green' },
+    { icon: AlertTriangle, label: '不确定性披露', value: 78, badge: 'amber' },
+    { icon: ShieldCheck, label: '安全合规性', value: 96, badge: 'green' },
   ];
 
   const toolCalls = [
-    '[10:23:45] search_safety_db(location="Tokyo") → 3 alerts found',
-    '[10:23:47] search_pois(city="Tokyo", interests=["temples"]) → 12 results',
-    '[10:23:50] calculate_route(waypoints=[...]) → 4.2km total',
+    '[10:23:45] 查询_安全_数据库(地点="东京") → 找到3个警告',
+    '[10:23:47] 搜索_景点(城市="东京", 兴趣=["寺庙"]) → 12个结果',
+    '[10:23:50] 计算_路线(路点=[...]) → 总长4.2公里',
   ];
 
   return (
@@ -853,7 +853,7 @@ function MetricsDashboardSection() {
             animate={inView ? { opacity: 1, y: 0 } : {}}
             transition={{ duration: 0.6, ease: easeOutExpo }}
           >
-            EVALUATION DASHBOARD
+            评估仪表板
           </motion.span>
           <motion.h2
             className="mt-4 font-display text-3xl sm:text-4xl md:text-[3.5rem] font-bold text-white leading-[1.15] tracking-[-0.02em]"
@@ -861,7 +861,7 @@ function MetricsDashboardSection() {
             animate={inView ? { opacity: 1, y: 0 } : {}}
             transition={{ duration: 0.6, ease: easeOutExpo, delay: 0.1 }}
           >
-            Built-In Quality Assurance
+            内置质量保证
           </motion.h2>
           <motion.p
             className="mt-4 text-base sm:text-lg leading-relaxed max-w-[600px] mx-auto"
@@ -870,7 +870,7 @@ function MetricsDashboardSection() {
             animate={inView ? { opacity: 1, y: 0 } : {}}
             transition={{ duration: 0.6, ease: easeOutExpo, delay: 0.2 }}
           >
-            Every itinerary is automatically evaluated across 5 key dimensions. See the scores and drill down into the details.
+            每个行程表都会自动在5个关键维度中进行评估。查看分数并深入了解详情。
           </motion.p>
         </div>
 
@@ -919,7 +919,7 @@ function MetricsDashboardSection() {
                   <span className="font-display text-5xl font-bold text-white">
                     {inView ? <CountUp end={91} duration={2} delay={0.5} /> : 0}
                   </span>
-                  <span className="text-sm mt-1" style={{ color: 'rgba(255,255,255,0.5)' }}>Overall Score</span>
+                  <span className="text-sm mt-1" style={{ color: 'rgba(255,255,255,0.5)' }}>总体评分</span>
                 </div>
                 {/* Grade badge */}
                 <motion.div
@@ -938,7 +938,7 @@ function MetricsDashboardSection() {
           <div className="mt-8 pt-6 border-t border-white/[0.06]">
             <div className="flex items-center gap-2 mb-4">
               <Terminal className="w-5 h-5 text-white" />
-              <h3 className="font-display text-xl font-semibold text-white">Recent Tool Calls</h3>
+              <h3 className="font-display text-xl font-semibold text-white">最近的工具调用</h3>
             </div>
             <div className="space-y-2">
               {toolCalls.map((log, i) => (
@@ -973,21 +973,21 @@ function TestimonialsSection() {
   const testimonials = [
     {
       name: 'Sarah Chen',
-      role: 'Travel Photographer',
+      role: '旅行摄影师',
       avatar: '/avatar-1.jpg',
-      quote: "The transparency is what sold me. I can see exactly why it recommended each location, which tool it used, and how confident it is. It's like having a travel agent who explains every decision.",
+      quote: "透明度是让我信服的原因。我可以准确看到为什么它推荐每个地点，它使用了哪个工具，它的信心程度如何。就像有一个旅行代理解释每一个决定。",
     },
     {
       name: 'Marcus Johnson',
-      role: 'Business Traveler',
+      role: '商务旅客',
       avatar: '/avatar-2.jpg',
-      quote: "I plan 20+ trips a year. WanderMind's evaluation dashboard gives me confidence that my constraints are actually being met — budget, time, safety. The memory feature remembers my preferences perfectly.",
+      quote: "我一年规划20多次旅行。WanderMind的评估仪表板让我确信我的约束实际上得到满足——预算、时间、安全。记忆功能完美记住了我的偏好。",
     },
     {
       name: 'David Park',
-      role: 'Solo Backpacker',
+      role: '独自背包客',
       avatar: '/avatar-3.jpg',
-      quote: "The safety compliance feature caught a travel advisory I didn't know about. The agent flagged it, explained the uncertainty, and offered alternatives. That's the kind of transparency I need.",
+      quote: "安全合规功能发现了一个我不知道的旅行警告。代理标记了它、解释了不确定性并提供了替代方案。这正是我需要的透明度。",
     },
   ];
 
@@ -1001,7 +1001,7 @@ function TestimonialsSection() {
             animate={inView ? { opacity: 1, y: 0 } : {}}
             transition={{ duration: 0.6, ease: easeOutExpo }}
           >
-            TESTIMONIALS
+            用户评价
           </motion.span>
           <motion.h2
             className="mt-4 font-display text-3xl sm:text-4xl md:text-[2.5rem] font-semibold text-[#0A2463] leading-[1.2] tracking-[-0.01em]"
@@ -1009,7 +1009,7 @@ function TestimonialsSection() {
             animate={inView ? { opacity: 1, y: 0 } : {}}
             transition={{ duration: 0.6, ease: easeOutExpo, delay: 0.1 }}
           >
-            Trusted by Travelers Worldwide
+            受全球旅客信赖
           </motion.h2>
         </div>
 
@@ -1069,7 +1069,7 @@ function CTASection() {
           animate={inView ? { opacity: 1, y: 0 } : {}}
           transition={{ duration: 0.8, ease: easeOutExpo }}
         >
-          Ready to Plan Your Next Adventure?
+          准备好规划您的下一场冒险了吗？
         </motion.h2>
 
         <motion.p
@@ -1079,7 +1079,7 @@ function CTASection() {
           animate={inView ? { opacity: 1, y: 0 } : {}}
           transition={{ duration: 0.6, ease: easeOutExpo, delay: 0.2 }}
         >
-          Join thousands of travelers who plan with confidence. Start your transparent AI-powered journey today.
+          加入数千名有信心规划旅行的旅客。立即开始您的透明AI驱动的旅程。
         </motion.p>
 
         <motion.div
@@ -1093,7 +1093,7 @@ function CTASection() {
             className="inline-flex items-center justify-center px-10 py-4 rounded-full text-white font-semibold text-xl transition-all duration-300 hover:scale-105 hover:shadow-glow-coral"
             style={{ background: '#E29578' }}
           >
-            Get Started Free
+            免费开始
           </Link>
         </motion.div>
 
@@ -1104,7 +1104,7 @@ function CTASection() {
           transition={{ duration: 0.5, delay: 0.6 }}
         >
           <a href="#" className="text-base text-[#8ECAE6] hover:text-[#E29578] transition-colors duration-300">
-            View Demo &rarr;
+            查看演示 &rarr;
           </a>
         </motion.div>
       </div>

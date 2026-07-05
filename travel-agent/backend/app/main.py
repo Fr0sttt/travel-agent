@@ -12,25 +12,156 @@ Travel Agent FastAPI 入口模块
 
 from __future__ import annotations
 
+import atexit
 import asyncio
+import os
 import json
+import sys
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, AsyncGenerator
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
+from agent.graph import build_travel_graph
 from agent.tools import TOOLS, get_tools
+from agent.mcp_bridge import close_mcp_bridge, get_mcp_health_text
 from agent.travel_agent import TravelAgent
-from config import get_settings, settings
+from config import settings
+from memory.memory_manager import MemoryManager
+from infrastructure.remote_middleware_tunnel import RemoteMiddlewareTunnels, _TunnelSpec
 from models.schemas import (
     AgentResponse,
     ChatRequest,
     HealthResponse,
     PlanRequest,
 )
+
+# psycopg 的异步模式（LangGraph checkpointer 依赖）在 Windows 上不兼容默认的
+# ProactorEventLoop，必须在事件循环创建之前切换成 SelectorEventLoop。
+# 已用独立脚本验证过这个修复是必需的（报错：
+# "Psycopg cannot use the 'ProactorEventLoop' to run in async mode"）。
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+
+def _running_in_pycharm() -> bool:
+    """判断是否运行在 PyCharm 调试环境，便于关闭重载子进程。
+
+    新版 PyCharm 不再注入 PYCHARM_HOSTED 等环境变量,改成检测
+    命令行里带的 pycharm helper 脚本或 IDE 特有的调试参数。
+    """
+    if os.getenv("PYCHARM_HOSTED") or os.getenv("PYCHARM_DISPLAY_PORT") or os.getenv("PYCHARM_MATPLOTLIB_PORT"):
+        return True
+    # 新版 PyCharm 会把 pydevd/pycharm helper 路径塞进 sys.argv 或 sys.path
+    import sys
+    joined = " ".join(sys.argv) + " " + " ".join(sys.path)
+    return "pycharm" in joined.lower() or "pydevd" in joined.lower()
+
+
+def _cleanup_runtime() -> None:
+    """进程退出时兜底清理已创建的运行时资源。"""
+    app_obj = globals().get("app")
+    if app_obj is None:
+        return
+
+    state = getattr(app_obj, "state", None)
+    tunnel_manager = getattr(state, "tunnel_manager", None)
+    if tunnel_manager is not None:
+        try:
+            tunnel_manager.close()
+        except Exception:
+            pass
+
+    try:
+        asyncio.run(close_mcp_bridge())
+    except Exception:
+        pass
+
+
+atexit.register(_cleanup_runtime)
+
+
+def _kill_port_occupants(port: int) -> None:
+    """启动前把占用指定端口的残留进程干掉。
+
+    PyCharm 点红色停止按钮走 TerminateProcess,atexit 不会跑,
+    paramiko SSH 隧道线程和 uvicorn socket 可能留着占端口。
+    下次启动前主动清理,避免 [WinError 10048]。
+    """
+    import subprocess
+
+    current_pid = os.getpid()
+    killed = []
+
+    if os.name == "nt":
+        # Windows:netstat 找 PID,taskkill 杀
+        try:
+            result = subprocess.run(
+                ["netstat", "-ano", "-p", "TCP"],
+                capture_output=True, text=True, timeout=5,
+            )
+        except Exception as exc:
+            print(f"[startup] netstat 查询失败,跳过端口清理: {exc}", flush=True)
+            return
+
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            # 格式: TCP 0.0.0.0:8000 0.0.0.0:0 LISTENING <pid>
+            if len(parts) < 5:
+                continue
+            local = parts[1]
+            state = parts[3] if len(parts) >= 5 else ""
+            if not local.endswith(f":{port}"):
+                continue
+            if state != "LISTENING":
+                continue
+            try:
+                pid = int(parts[-1])
+            except ValueError:
+                continue
+            if pid == current_pid or pid == 0:
+                continue
+            try:
+                subprocess.run(
+                    ["taskkill", "/F", "/PID", str(pid)],
+                    capture_output=True, timeout=5,
+                )
+                killed.append(pid)
+            except Exception as exc:
+                print(f"[startup] 杀掉 PID {pid} 失败: {exc}", flush=True)
+    else:
+        # Linux/Mac:lsof
+        try:
+            result = subprocess.run(
+                ["lsof", "-ti", f"tcp:{port}"],
+                capture_output=True, text=True, timeout=5,
+            )
+            for line in result.stdout.splitlines():
+                try:
+                    pid = int(line.strip())
+                except ValueError:
+                    continue
+                if pid == current_pid:
+                    continue
+                try:
+                    os.kill(pid, 9)
+                    killed.append(pid)
+                except Exception:
+                    pass
+        except FileNotFoundError:
+            return
+
+    if killed:
+        print(f"[startup] 清理了占用 {port} 端口的残留进程: {killed}", flush=True)
+        # 给系统一点时间释放 socket
+        import time as _time
+        _time.sleep(0.5)
 
 
 # ==================== 生命周期管理 ====================
@@ -43,14 +174,81 @@ async def lifespan(app: FastAPI):
     启动时初始化 Agent，关闭时清理资源。
     """
     # 启动
-    app.state.agent = TravelAgent()
-    app.state.start_time = asyncio.get_event_loop().time()
+    print("[startup] begin", flush=True)
+    tunnel_manager = None
+    if settings.remote_middleware_ssh_enabled:
+        print("[startup] preparing remote tunnels", flush=True)
+        tunnel_manager = RemoteMiddlewareTunnels(
+            ssh_host=settings.remote_middleware_ssh_host,
+            ssh_port=settings.remote_middleware_ssh_port,
+            ssh_username=settings.remote_middleware_ssh_username,
+            ssh_password=settings.remote_middleware_ssh_password,
+            auto_start_remote_services=settings.remote_middleware_auto_start,
+            tunnel_specs=[
+                _TunnelSpec(
+                    name="postgres",
+                    local_host="127.0.0.1",
+                    local_port=settings.local_postgres_port,
+                    remote_host=settings.remote_postgres_host,
+                    remote_port=settings.remote_postgres_port,
+                ),
+                _TunnelSpec(
+                    name="elasticsearch",
+                    local_host="127.0.0.1",
+                    local_port=settings.local_elasticsearch_port,
+                    remote_host=settings.remote_elasticsearch_host,
+                    remote_port=settings.remote_elasticsearch_port,
+                ),
+            ],
+        )
+        tunnel_manager.start()
+        print("[startup] remote tunnels ready", flush=True)
+        app.state.tunnel_manager = tunnel_manager
 
-    yield
+    print("[startup] initializing memory manager", flush=True)
+    memory_manager = MemoryManager(
+        use_mem0=bool(settings.mem0_api_key),
+        max_context_tokens=8000,
+        embedding_provider="hash",
+        persist_dir=settings.mem0_chroma_path,
+        memory_backend=settings.memory_backend,
+        elasticsearch_url=settings.elasticsearch_url,
+        elasticsearch_username=settings.elasticsearch_username,
+        elasticsearch_password=settings.elasticsearch_password,
+        elasticsearch_index_prefix=settings.elasticsearch_index_prefix,
+        elasticsearch_vector_dims=settings.elasticsearch_vector_dims,
+        session_history_db_url=settings.session_history_db_url,
+    )
+    print("[startup] memory manager ready", flush=True)
+    app.state.memory_manager = memory_manager
 
-    # 关闭
-    if hasattr(app.state, "agent"):
-        del app.state.agent
+    # LangGraph checkpointer 用于持久化图执行状态，支持断点续传。
+    # psycopg v3 原生连接不认 SQLAlchemy 专用的 +psycopg2/+psycopg 前缀。
+    pg_conn_str = (
+        settings.session_history_db_url
+        .replace("postgresql+psycopg2://", "postgresql://")
+        .replace("postgresql+psycopg://", "postgresql://")
+    )
+    print("[startup] initializing LangGraph checkpointer", flush=True)
+    async with AsyncPostgresSaver.from_conn_string(pg_conn_str) as checkpointer:
+        await checkpointer.setup()  # 幂等，首次建表，之后调用不会重复建
+        graph = build_travel_graph(checkpointer=checkpointer)
+        app.state.agent = TravelAgent(graph=graph, memory_manager=memory_manager)
+        print("[startup] agent ready (with checkpointer)", flush=True)
+        app.state.start_time = asyncio.get_event_loop().time()
+
+        yield
+
+        # 关闭（必须在 async with 内部，否则 checkpointer 连接会在请求
+        # 处理期间被提前关闭）
+        if hasattr(app.state, "agent"):
+            del app.state.agent
+        if hasattr(app.state, "memory_manager"):
+            del app.state.memory_manager
+        if hasattr(app.state, "tunnel_manager"):
+            app.state.tunnel_manager.close()
+            del app.state.tunnel_manager
+        await close_mcp_bridge()
 
 
 # ==================== FastAPI 应用 ====================
@@ -64,6 +262,13 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
 )
+
+frontend_dist_dir = Path(settings.frontend_dist_dir).expanduser().resolve() if settings.frontend_dist_dir else None
+frontend_index_file = frontend_dist_dir / "index.html" if frontend_dist_dir else None
+frontend_assets_dir = frontend_dist_dir / "assets" if frontend_dist_dir else None
+
+if frontend_assets_dir and frontend_assets_dir.exists():
+    app.mount("/assets", StaticFiles(directory=str(frontend_assets_dir)), name="frontend_assets")
 
 # CORS 中间件
 app.add_middleware(
@@ -88,6 +293,11 @@ def get_agent(request: Request) -> TravelAgent:
         TravelAgent: Agent 实例
     """
     return request.app.state.agent
+
+
+def get_memory_manager(request: Request) -> MemoryManager:
+    """获取记忆管理器实例。"""
+    return request.app.state.memory_manager
 
 
 # ==================== 健康检查 ====================
@@ -122,6 +332,8 @@ async def health() -> HealthResponse:
     else:
         deps["langfuse"] = "not configured"
 
+    deps["amap_mcp"] = get_mcp_health_text()
+
     return HealthResponse(
         status="ok",
         version=settings.app_version,
@@ -130,16 +342,36 @@ async def health() -> HealthResponse:
 
 
 @app.get("/", tags=["系统"])
-async def root() -> dict[str, str]:
+async def root():
     """
-    根路径 - API 信息
+    根路径 - 优先返回前端页面，没有静态文件时返回 API 信息
     """
+    if frontend_index_file and frontend_index_file.exists():
+        return FileResponse(frontend_index_file)
     return {
         "name": settings.app_name,
         "version": settings.app_version,
         "docs": "/docs",
         "health": "/health",
     }
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """
+    全局异常处理
+
+    捕获未处理的异常，返回标准化的错误响应。
+    """
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "internal_server_error",
+            "message": str(exc),
+            "path": str(request.url),
+        },
+    )
+
 
 
 # ==================== 行程规划 API ====================
@@ -182,7 +414,7 @@ async def create_plan(
                 if event_type == "complete":
                     itinerary = data.get("itinerary", "")
                     risk_alerts = data.get("risk_alerts", [])
-                    session_state = agent.get_session_state(session_id)
+                    session_state = await agent.get_session_state(session_id)
 
                     return AgentResponse(
                         session_id=session_id,
@@ -245,7 +477,7 @@ async def get_plan(
     Raises:
         HTTPException: 会话不存在时返回 404
     """
-    state = agent.get_session_state(session_id)
+    state = await agent.get_session_state(session_id)
 
     if not state:
         raise HTTPException(status_code=404, detail=f"会话 {session_id} 不存在或已过期")
@@ -287,6 +519,7 @@ async def delete_plan(
 async def get_session_state(
     session_id: str,
     agent: TravelAgent = Depends(get_agent),
+    memory_manager: MemoryManager = Depends(get_memory_manager),
 ) -> JSONResponse:
     """
     获取会话完整状态
@@ -303,13 +536,55 @@ async def get_session_state(
     Raises:
         HTTPException: 会话不存在时返回 404
     """
-    state = agent.get_session_state(session_id)
+    state = await agent.get_session_state(session_id)
+    if not state:
+        state = memory_manager.get_session_snapshot(session_id)
     if not state:
         raise HTTPException(status_code=404, detail=f"会话 {session_id} 不存在或已过期")
 
-    # 确保内容可 JSON 序列化
+    # 确保内容可 JSON 序列化，并补上最近消息，方便前端恢复聊天窗口
     serializable_state = json.loads(json.dumps(state, default=str))
+    if not serializable_state.get("messages"):
+        serializable_state["messages"] = memory_manager.get_recent_session_history(
+            session_id,
+            limit=200,
+        )
     return JSONResponse(content=serializable_state)
+
+
+@app.get("/api/sessions", tags=["行程规划"])
+async def list_sessions(
+    memory_manager: MemoryManager = Depends(get_memory_manager),
+) -> dict[str, Any]:
+    """列出最近活跃的会话。"""
+    sessions = memory_manager.list_sessions(limit=100)
+    return {
+        "count": len(sessions),
+        "sessions": sessions,
+    }
+
+
+@app.delete("/api/sessions/{session_id}", tags=["行程规划"])
+async def delete_session(
+    session_id: str,
+    agent: TravelAgent = Depends(get_agent),
+    memory_manager: MemoryManager = Depends(get_memory_manager),
+) -> dict[str, str]:
+    """
+    彻底删除一个会话
+
+    同时清除：PG 中的会话历史/消息记录、LangGraph 的内存规划状态。
+    与 /api/plan/{session_id} 不同，后者只清规划状态，不删会话记录。
+
+    Args:
+        session_id: 会话 ID
+
+    Returns:
+        操作结果
+    """
+    memory_manager.delete_session(session_id)
+    agent.clear_session(session_id)
+    return {"status": "ok", "message": f"会话 {session_id} 已删除"}
 
 
 # ==================== 聊天 API ====================
@@ -332,7 +607,7 @@ async def chat(
     """
     try:
         chunks: list[str] = []
-        async for chunk in agent.chat(request.message, request.session_id):
+        async for chunk in agent.plan_travel(request.message, request.session_id):
             chunks.append(chunk)
 
         if chunks:
@@ -408,7 +683,7 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
     agent: TravelAgent = app.state.agent
 
     async def event_generator() -> AsyncGenerator[str, None]:
-        async for chunk in agent.chat(request.message, request.session_id):
+        async for chunk in agent.plan_travel(request.message, request.session_id):
             yield chunk
 
     return StreamingResponse(
@@ -446,16 +721,10 @@ async def websocket_chat(websocket: WebSocket, session_id: str):
             try:
                 data = json.loads(raw_data)
                 message = data.get("message", "")
-                message_type = data.get("type", "chat")
-
-                if message_type == "plan":
-                    # 行程规划模式
-                    async for chunk in agent.plan_travel(message, session_id):
-                        await websocket.send_text(chunk)
-                else:
-                    # 聊天模式
-                    async for chunk in agent.chat(message, session_id):
-                        await websocket.send_text(chunk)
+                # plan_travel 内部走 intent_router 判断是规划/续问/问答/闲聊，
+                # 不再需要在这里区分 message_type 走不同方法
+                async for chunk in agent.plan_travel(message, session_id):
+                    await websocket.send_text(chunk)
 
                 # 发送结束标记
                 await websocket.send_text(
@@ -523,33 +792,53 @@ async def list_tools() -> dict[str, Any]:
 
 # ==================== 全局异常处理 ====================
 
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """
-    全局异常处理
-
-    捕获未处理的异常，返回标准化的错误响应。
-    """
-    return JSONResponse(
-        status_code=500,
-        content={
-            "error": "internal_server_error",
-            "message": str(exc),
-            "path": str(request.url),
-        },
-    )
-
 
 # ==================== 主入口 ====================
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+async def spa_fallback(full_path: str):
+    """
+    前端单页应用兜底路由。
+    """
+    if full_path.startswith(("api", "ws", "docs", "redoc", "openapi.json", "health")):
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    if frontend_dist_dir and full_path:
+        candidate = (frontend_dist_dir / full_path).resolve()
+        if candidate.is_file() and frontend_dist_dir in candidate.parents:
+            return FileResponse(candidate)
+
+    if frontend_index_file and frontend_index_file.exists():
+        return FileResponse(frontend_index_file)
+
+    raise HTTPException(status_code=404, detail="Not Found")
+
 
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(
+    # 启动前先清掉占用目标端口的残留进程
+    # (PyCharm 红色停止不走 atexit,paramiko/uvicorn socket 会残留)
+    _kill_port_occupants(settings.api_port)
+
+    # 不用 uvicorn.run(...)：它内部的 Server.run() 会调用
+    # config.setup_event_loop()，这个方法在 Windows 上会强制
+    # asyncio.set_event_loop_policy(WindowsProactorEventLoopPolicy())，
+    # 把我们设置的 SelectorEventLoop 策略覆盖回去（已实测确认）。
+    # psycopg 的异步模式（LangGraph checkpointer 依赖）不支持 Proactor，
+    # 所以改用更底层的 Server(...).serve()，跳过 setup_event_loop()，
+    # 自己用 asyncio.run() 控制事件循环创建时机。
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+    config = uvicorn.Config(
         "main:app",
         host=settings.api_host,
         port=settings.api_port,
         workers=settings.api_workers,
-        reload=settings.is_development,
+        reload=False,  # PyCharm 有自己的热重载,uvicorn reload 会导致双进程 bind 冲突
         log_level=settings.log_level.lower(),
     )
+    server = uvicorn.Server(config)
+    asyncio.run(server.serve())

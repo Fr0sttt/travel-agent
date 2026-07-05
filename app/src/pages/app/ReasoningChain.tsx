@@ -25,13 +25,13 @@ export default function ReasoningChain({ steps }: ReasoningChainProps) {
             className="text-sm font-medium"
             style={{ color: '#8ECAE6', fontFamily: "'Inter Variable', Inter, sans-serif" }}
           >
-            Reasoning Chain
+            推理链
           </span>
           <span
             className="text-xs px-1.5 py-0.5 rounded-full"
             style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.4)', fontFamily: "'JetBrains Mono Variable', monospace" }}
           >
-            {steps.length} steps
+            {steps.length} 步
           </span>
         </div>
         <motion.div

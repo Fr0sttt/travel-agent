@@ -11,8 +11,8 @@ const typeColors: Record<string, string> = {
   activity: '#FF9F1C',
 };
 
-const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const DAYS = ['日', '一', '二', '三', '四', '五', '六'];
+const MONTH_NAMES = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
 
 export default function CalendarPanel() {
   const { dashboardData } = useTravel();

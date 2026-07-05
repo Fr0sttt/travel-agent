@@ -1,7 +1,8 @@
 """
 Travel Agent 核心工具模块
 
-包含 7 个核心工具的完整实现：
+包含 7 个核心工具的完整实现，地点、地理编码、路线、天气优先走高德 MCP，
+其余能力继续保留本地规则与公开数据源兜底：
 1. collect_preferences - 提取和更新用户偏好
 2. search_places - OpenTripMap POI 搜索
 3. geocode_location - Nominatim 地理编码
@@ -30,6 +31,7 @@ import httpx
 from langchain_core.tools import tool
 
 from config import settings
+from agent.mcp_bridge import maybe_call_mcp_tool
 
 
 # ==================== 工具调用追踪装饰器 ====================
@@ -202,15 +204,468 @@ def _sync_http_get(
     raise last_error or httpx.HTTPError(f"请求失败: {url}")
 
 
+def _coerce_float(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _mcp_list_payload(payload: Any) -> list[Any] | None:
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        for key in ("results", "places", "pois", "items", "data", "daily"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return value
+            if isinstance(value, dict):
+                nested = _mcp_list_payload(value)
+                if nested is not None:
+                    return nested
+    return None
+
+
+def _mcp_dict_payload(payload: Any) -> dict[str, Any] | None:
+    if isinstance(payload, dict):
+        return payload
+    if isinstance(payload, list):
+        for item in payload:
+            if isinstance(item, dict):
+                return item
+    return None
+
+
+def _normalize_mcp_pois(payload: Any, lat: float, lon: float, kinds: str, tool_name: str) -> list[dict[str, Any]] | None:
+    items = _mcp_list_payload(payload)
+    if items is None and isinstance(payload, dict) and any(
+        key in payload for key in ("name", "coordinates", "lat", "lon")
+    ):
+        items = [payload]
+
+    if items is None:
+        return None
+
+    results: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        coordinates = item.get("coordinates") if isinstance(item.get("coordinates"), dict) else {}
+        poi = {
+            "name": str(item.get("name") or item.get("title") or item.get("poi_name") or "").strip(),
+            "category": item.get("category") or item.get("type") or item.get("kind") or kinds,
+            "coordinates": {
+                "lat": _coerce_float(item.get("lat") or coordinates.get("lat")) or lat,
+                "lon": _coerce_float(item.get("lon") or coordinates.get("lon")) or lon,
+            },
+            "rating": _coerce_float(item.get("rating") or item.get("rate")),
+            "description": item.get("description") or item.get("summary") or item.get("address") or item.get("note"),
+            "source": item.get("source") or f"MCP:{tool_name}",
+            "uncertainty_flags": item.get("uncertainty_flags") or ["MCP 数据源返回"],
+        }
+        if poi["name"]:
+            results.append(poi)
+
+    return results
+
+
+def _normalize_mcp_geocode(payload: Any, query: str, tool_name: str) -> dict[str, Any] | None:
+    data = _mcp_dict_payload(payload)
+    if data is None:
+        return None
+
+    coordinates = data.get("coordinates") if isinstance(data.get("coordinates"), dict) else {}
+    lat = _coerce_float(data.get("lat") or coordinates.get("lat"))
+    lon = _coerce_float(data.get("lon") or coordinates.get("lon"))
+    if lat is None or lon is None:
+        return None
+
+    return {
+        "lat": lat,
+        "lon": lon,
+        "display_name": data.get("display_name") or data.get("name") or query,
+        "source": data.get("source") or f"MCP:{tool_name}",
+        "uncertainty": data.get("uncertainty") or "MCP 地理编码结果",
+        "success": bool(data.get("success", True)),
+    }
+
+
+def _normalize_mcp_route(
+    payload: Any,
+    profile: str,
+    tool_name: str,
+) -> dict[str, Any] | None:
+    data = _mcp_dict_payload(payload)
+    if data is None:
+        return None
+
+    distance = _coerce_float(
+        data.get("distance")
+        or data.get("distance_meters")
+        or data.get("distance_meter")
+        or data.get("distance_m")
+    )
+    duration = _coerce_float(
+        data.get("duration")
+        or data.get("duration_seconds")
+        or data.get("duration_sec")
+        or data.get("duration_s")
+    )
+    if distance is None or duration is None:
+        return None
+
+    route_profile = data.get("profile") or data.get("transportation_mode") or profile
+    return {
+        "distance": round(distance, 2),
+        "duration": round(duration, 2),
+        "distance_km": round(distance / 1000, 2),
+        "duration_minutes": round(duration / 60, 1),
+        "profile": route_profile,
+        "source": data.get("source") or f"MCP:{tool_name}",
+        "uncertainty": data.get("uncertainty") or "MCP 路线结果",
+    }
+
+
+def _normalize_mcp_weather(payload: Any, tool_name: str) -> dict[str, Any] | None:
+    if isinstance(payload, list):
+        data = {"daily": payload}
+    else:
+        data = _mcp_dict_payload(payload)
+    if data is None:
+        return None
+
+    WEATHER_CODES = {
+        0: "晴朗", 1: "大部晴朗", 2: "多云", 3: "阴天",
+        45: "雾", 48: "雾凇",
+        51: "毛毛雨", 53: "中度毛毛雨", 55: "大毛毛雨",
+        61: "小雨", 63: "中雨", 65: "大雨",
+        71: "小雪", 73: "中雪", 75: "大雪",
+        77: "雪粒", 80: "小阵雨", 81: "中阵雨", 82: "大阵雨",
+        85: "小阵雪", 86: "大阵雪",
+        95: "雷雨", 96: "雷伴小冰雹", 99: "雷伴大冰雹",
+    }
+
+    daily_source = data.get("daily")
+    if daily_source is None:
+        daily_source = data.get("forecast") or data.get("items") or data.get("data")
+    if daily_source is None and any(key in data for key in ("date", "temperature_max", "temperature_min")):
+        daily_source = [data]
+
+    if not isinstance(daily_source, list):
+        return None
+
+    daily: list[dict[str, Any]] = []
+    for item in daily_source:
+        if not isinstance(item, dict):
+            continue
+        code = int(item.get("weather_code", item.get("code", 0)) or 0)
+        daily.append({
+            "date": item.get("date") or item.get("day") or item.get("time"),
+            "temperature_max": _coerce_float(item.get("temperature_max") or item.get("temperature_2m_max") or item.get("max_temp")),
+            "temperature_min": _coerce_float(item.get("temperature_min") or item.get("temperature_2m_min") or item.get("min_temp")),
+            "precipitation_probability": _coerce_float(
+                item.get("precipitation_probability")
+                or item.get("precipitation_probability_max")
+                or item.get("rain_probability")
+            )
+            or 0,
+            "weather_code": code,
+            "description": item.get("description") or WEATHER_CODES.get(code, "未知"),
+        })
+
+    return {
+        "daily": daily,
+        "source": data.get("source") or f"MCP:{tool_name}",
+        "uncertainty": data.get("uncertainty") or "MCP 天气结果",
+    }
+
+
+AMAP_KIND_KEYWORDS = {
+    "interesting_places": "景点",
+    "museums": "博物馆",
+    "historic": "古迹",
+    "natural": "景点",
+    "foods": "美食",
+    "shops": "购物",
+    "religion": "寺庙",
+    "architecture": "建筑",
+    "parks": "公园",
+}
+
+
+def _amap_keyword_for_kinds(kinds: str) -> str:
+    return AMAP_KIND_KEYWORDS.get(kinds, kinds.replace("_", " ").strip())
+
+
+def _parse_amap_location(location: Any) -> tuple[float | None, float | None]:
+    if isinstance(location, dict):
+        lon = _coerce_float(location.get("lng") or location.get("lon") or location.get("longitude"))
+        lat = _coerce_float(location.get("lat") or location.get("latitude"))
+        return lat, lon
+
+    if not isinstance(location, str):
+        return None, None
+
+    text = location.strip()
+    if not text or "," not in text:
+        return None, None
+
+    lon_text, lat_text = [piece.strip() for piece in text.split(",", 1)]
+    lon = _coerce_float(lon_text)
+    lat = _coerce_float(lat_text)
+    return lat, lon
+
+
+def _amap_first_record(payload: Any) -> dict[str, Any] | None:
+    data = _mcp_dict_payload(payload)
+    if data is None:
+        return None
+
+    records = data.get("return")
+    if isinstance(records, list) and records and isinstance(records[0], dict):
+        return records[0]
+    if isinstance(records, dict):
+        return records
+
+    for key in ("geocodes", "pois", "casts", "forecast", "data"):
+        value = data.get(key)
+        if isinstance(value, list) and value and isinstance(value[0], dict):
+            return value[0]
+        if isinstance(value, dict):
+            return value
+
+    return data
+
+
+def _normalize_amap_geocode(payload: Any, query: str) -> dict[str, Any] | None:
+    record = _amap_first_record(payload)
+    if record is None:
+        return None
+
+    lat, lon = _parse_amap_location(record.get("location"))
+    if lat is None or lon is None:
+        lat = _coerce_float(record.get("lat"))
+        lon = _coerce_float(record.get("lon") or record.get("lng"))
+    if lat is None or lon is None:
+        return None
+
+    display_name = (
+        record.get("formatted_address")
+        or record.get("address")
+        or record.get("name")
+        or query
+    )
+    return {
+        "lat": lat,
+        "lon": lon,
+        "display_name": display_name,
+        "source": "高德地图 MCP",
+        "uncertainty": "高德地理编码结果",
+        "success": True,
+    }
+
+
+def _normalize_amap_route(payload: Any, profile: str) -> dict[str, Any] | None:
+    data = _mcp_dict_payload(payload)
+    if data is None:
+        return None
+
+    route = data.get("route") if isinstance(data.get("route"), dict) else data
+    if route is None:
+        return None
+
+    paths = route.get("paths") if isinstance(route.get("paths"), list) else []
+    first_path = paths[0] if paths and isinstance(paths[0], dict) else route
+
+    distance = _coerce_float(first_path.get("distance") or route.get("distance"))
+    duration = _coerce_float(first_path.get("duration") or route.get("duration"))
+    if distance is None or duration is None:
+        return None
+
+    steps: list[dict[str, Any]] = []
+    polyline_points: list[list[float]] = []
+    raw_steps = first_path.get("steps") if isinstance(first_path.get("steps"), list) else []
+    for step in raw_steps:
+        if not isinstance(step, dict):
+            continue
+        steps.append(
+            {
+                "instruction": step.get("instruction"),
+                "road": step.get("road"),
+                "distance": _coerce_float(step.get("distance")),
+                "orientation": step.get("orientation"),
+                "duration": _coerce_float(step.get("duration")),
+            }
+        )
+        # 高德每个 step 的 polyline 是 "lon1,lat1;lon2,lat2;..." 格式的实际道路坐标串，
+        # 拼接起来才是真实路网路径，而不是 POI 点之间的直线。
+        step_polyline = step.get("polyline")
+        if isinstance(step_polyline, str) and step_polyline:
+            for point in step_polyline.split(";"):
+                point = point.strip()
+                if not point or "," not in point:
+                    continue
+                lon_str, lat_str = point.split(",", 1)
+                point_lon = _coerce_float(lon_str)
+                point_lat = _coerce_float(lat_str)
+                if point_lon is not None and point_lat is not None:
+                    polyline_points.append([point_lon, point_lat])
+
+    return {
+        "distance": round(distance, 2),
+        "duration": round(duration, 2),
+        "distance_km": round(distance / 1000, 2),
+        "duration_minutes": round(duration / 60, 1),
+        "profile": route.get("strategy") or route.get("profile") or profile,
+        "steps": steps,
+        # 实际道路路径坐标点 [[lon, lat], ...]，前端画线应使用这个而非 POI 直连
+        "polyline": polyline_points,
+        "source": "高德地图 MCP",
+        "uncertainty": "高德路线结果",
+    }
+
+
+def _normalize_amap_weather(payload: Any) -> dict[str, Any] | None:
+    data = _mcp_dict_payload(payload)
+    if data is None:
+        return None
+
+    WEATHER_CODES = {
+        0: "晴朗", 1: "大部晴朗", 2: "多云", 3: "阴天",
+        45: "雾", 48: "雾凇",
+        51: "毛毛雨", 53: "中度毛毛雨", 55: "大毛毛雨",
+        61: "小雨", 63: "中雨", 65: "大雨",
+        71: "小雪", 73: "中雪", 75: "大雪",
+        77: "雪粒", 80: "小阵雨", 81: "中阵雨", 82: "大阵雨",
+        85: "小阵雪", 86: "大阵雪",
+        95: "雷雨", 96: "雷伴小冰雹", 99: "雷伴大冰雹",
+    }
+
+    forecasts = data.get("forecasts")
+    if not isinstance(forecasts, list):
+        forecasts = data.get("casts")
+    if not isinstance(forecasts, list):
+        forecasts = data.get("daily")
+    if not isinstance(forecasts, list):
+        return None
+
+    daily: list[dict[str, Any]] = []
+    for item in forecasts:
+        if not isinstance(item, dict):
+            continue
+        code = int(item.get("weather_code", item.get("code", 0)) or 0)
+        day_weather = item.get("dayweather") or item.get("description")
+        night_weather = item.get("nightweather")
+        if day_weather and night_weather and night_weather != day_weather:
+            description = f"白天{day_weather}，夜间{night_weather}"
+        else:
+            description = day_weather or night_weather or WEATHER_CODES.get(code, "未知")
+
+        daily.append(
+            {
+                "date": item.get("date") or item.get("day") or item.get("time"),
+                "temperature_max": _coerce_float(
+                    item.get("temperature_max")
+                    or item.get("daytemp")
+                    or item.get("temperature_2m_max")
+                    or item.get("max_temp")
+                ),
+                "temperature_min": _coerce_float(
+                    item.get("temperature_min")
+                    or item.get("nighttemp")
+                    or item.get("temperature_2m_min")
+                    or item.get("min_temp")
+                ),
+                "precipitation_probability": _coerce_float(
+                    item.get("precipitation_probability")
+                    or item.get("precipitation_probability_max")
+                    or item.get("rain_probability")
+                )
+                or 0,
+                "weather_code": code,
+                "description": description,
+            }
+        )
+
+    if not daily:
+        return None
+
+    return {
+        "daily": daily,
+        "source": "高德地图 MCP",
+        "uncertainty": "高德天气结果",
+    }
+
+
+async def _enrich_amap_poi_item(item: dict[str, Any], lat: float, lon: float, kinds: str) -> dict[str, Any] | None:
+    name = str(item.get("name") or "").strip()
+    if not name:
+        return None
+
+    poi: dict[str, Any] = {
+        "name": name,
+        "category": kinds,
+        "coordinates": {"lat": lat, "lon": lon},
+        "rating": None,
+        "description": item.get("address") or item.get("typecode"),
+        "source": "高德地图 MCP",
+        "uncertainty_flags": ["高德周边搜索结果"],
+    }
+
+    parsed_lat, parsed_lon = _parse_amap_location(item.get("location"))
+    if parsed_lat is not None and parsed_lon is not None:
+        poi["coordinates"] = {"lat": parsed_lat, "lon": parsed_lon}
+        poi["uncertainty_flags"] = []
+    elif item.get("id"):
+        detail_payload = await maybe_call_mcp_tool("maps_search_detail", {"id": str(item["id"])})
+        detail = _mcp_dict_payload(detail_payload)
+        if detail:
+            detail_lat, detail_lon = _parse_amap_location(detail.get("location"))
+            if detail_lat is not None and detail_lon is not None:
+                poi["coordinates"] = {"lat": detail_lat, "lon": detail_lon}
+                poi["uncertainty_flags"] = []
+            poi["description"] = detail.get("address") or poi["description"]
+            poi["rating"] = _coerce_float(detail.get("rating"))
+            poi["source"] = "高德地图 MCP（详情）"
+
+    return poi
+
+
+async def _normalize_amap_pois(payload: Any, lat: float, lon: float, kinds: str) -> list[dict[str, Any]] | None:
+    data = _mcp_dict_payload(payload)
+    if data is None:
+        return None
+
+    items = data.get("pois")
+    if not isinstance(items, list):
+        items = _mcp_list_payload(data)
+    if not isinstance(items, list):
+        return None
+
+    results: list[dict[str, Any]] = []
+    for item in items[:15]:
+        if not isinstance(item, dict):
+            continue
+        poi = await _enrich_amap_poi_item(item, lat, lon, kinds)
+        if poi is not None:
+            results.append(poi)
+
+    return results or None
+
+
 # ==================== 工具 1: 偏好收集 ====================
 
 @tool
-def collect_preferences(user_input: str, current_preferences: dict | None = None) -> dict:
+async def collect_preferences(user_input: str, current_preferences: dict | None = None) -> dict:
     """
     从用户对话中提取和结构化旅行偏好信息。
 
-    当用户提供了新的旅行需求时使用此工具。该工具使用 LLM 从自然语言中
-    提取关键字段：目的地、天数、预算、兴趣、同行人等。
+    当用户提供了新的旅行需求时使用此工具。优先用 LLM 从自然语言中提取
+    关键字段：目的地、天数、预算、兴趣、同行人等，能处理任意表达方式
+    （比如"杭州 10000 3天"这种没有"去/预算/元"等关键词的紧凑表达）。
+    LLM 调用失败或超时时，降级到关键词正则提取兜底，保证流程不中断。
 
     Args:
         user_input: 用户的原始自然语言输入，例如"我想去杭州玩3天，预算3000"
@@ -224,7 +679,7 @@ def collect_preferences(user_input: str, current_preferences: dict | None = None
             - updated (bool): 是否有更新
 
     Examples:
-        >>> collect_preferences("我想去杭州玩3天，预算3000")
+        >>> await collect_preferences.ainvoke({"user_input": "我想去杭州玩3天，预算3000"})
         {
             "preference": {"destination": "杭州", "duration_days": 3, "budget_cny": 3000},
             "missing_critical_fields": [],
@@ -235,8 +690,10 @@ def collect_preferences(user_input: str, current_preferences: dict | None = None
     if current_preferences is None:
         current_preferences = {}
 
-    # 使用简单的关键词提取（实际可由 LLM 完成）
-    result = _extract_preferences_from_text(user_input)
+    result = await _extract_preferences_with_llm(user_input, current_preferences)
+    if result is None:
+        # LLM 提取失败（超时/解析出错/接口异常），降级到关键词正则
+        result = _extract_preferences_from_text(user_input)
 
     # 合并到现有偏好
     merged = dict(current_preferences)
@@ -256,15 +713,84 @@ def collect_preferences(user_input: str, current_preferences: dict | None = None
     }
 
 
+async def _extract_preferences_with_llm(
+    user_input: str, current_preferences: dict
+) -> dict[str, Any] | None:
+    """
+    用 LLM 做结构化偏好提取，失败返回 None（调用方负责降级到正则）。
+
+    Args:
+        user_input: 用户输入
+        current_preferences: 当前已收集的偏好（用于增量提取的上下文）
+
+    Returns:
+        提取出的偏好字段字典，或 None（表示提取失败）
+    """
+    from agent.prompts import PREFERENCE_COLLECTION_PROMPT
+
+    try:
+        client = _get_async_openai_client()
+        from config import settings
+
+        prompt = PREFERENCE_COLLECTION_PROMPT.format(
+            current_preferences=json.dumps(current_preferences, ensure_ascii=False),
+            user_input=user_input,
+        )
+        response = await client.chat.completions.create(
+            model=settings.openai_model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1,
+            max_tokens=500,
+            timeout=10,
+        )
+        raw_text = response.choices[0].message.content or ""
+        import re
+        match = re.search(r"\{.*\}", raw_text, re.DOTALL)
+        json_text = match.group(0) if match else raw_text
+        parsed = json.loads(json_text)
+        preference = parsed.get("preference")
+        if not isinstance(preference, dict):
+            return None
+        return preference
+    except Exception:
+        return None
+
+
 def _extract_preferences_from_text(text: str) -> dict[str, Any]:
     """从文本中提取偏好（简化版关键词提取）"""
     import re
     result: dict[str, Any] = {}
 
+    def parse_number(value: str) -> int | None:
+        value = value.strip()
+        if value.isdigit():
+            return int(value)
+
+        chinese_digits = {
+            "零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
+            "五": 5, "六": 6, "七": 7, "八": 8, "九": 9,
+        }
+        if value in chinese_digits:
+            return chinese_digits[value]
+        if value == "十":
+            return 10
+        if "十" in value:
+            left, right = value.split("十", 1)
+            tens = chinese_digits.get(left, 1) if left else 1
+            ones = chinese_digits.get(right, 0) if right else 0
+            return tens * 10 + ones
+        return None
+
+    def parse_budget(amount: str, unit: str | None = None) -> float:
+        value = float(amount.replace(",", ""))
+        if unit == "万":
+            value *= 10000
+        return value
+
     # 目的地提取 - 匹配"去XX"、"到XX"、"XX旅行"
     dest_patterns = [
-        r'[去|到|飞往|前往](\w{2,8}?)[市|县|区|省|玩|旅行|旅游|度假]',
-        r'(\w{2,8})\s*(?:旅行|旅游|度假|攻略)',
+        r'(?:想)?(?:去|到|飞往|前往)([\u4e00-\u9fffA-Za-z]{2,12}?)(?:市|县|区|省)?(?=玩|旅行|旅游|度假|攻略|[,，。；;、\s]|$)',
+        r'([\u4e00-\u9fffA-Za-z]{2,12})\s*(?:旅行|旅游|度假|攻略)',
     ]
     for pattern in dest_patterns:
         match = re.search(pattern, text)
@@ -273,19 +799,21 @@ def _extract_preferences_from_text(text: str) -> dict[str, Any]:
             break
 
     # 天数提取
-    day_match = re.search(r'(\d+)\s*[天|日]', text)
+    day_match = re.search(r'([0-9]+|[零一二两三四五六七八九十]{1,3})\s*(?:天|日)', text)
     if day_match:
-        result["duration_days"] = int(day_match.group(1))
+        duration_days = parse_number(day_match.group(1))
+        if duration_days is not None:
+            result["duration_days"] = duration_days
 
     # 预算提取
-    budget_match = re.search(r'预算\s*(\d+)', text)
+    budget_match = re.search(r'预算(?:大概|约|为)?\s*([0-9][0-9,]*(?:\.\d+)?)\s*(万)?', text)
     if budget_match:
-        result["budget_cny"] = float(budget_match.group(1))
+        result["budget_cny"] = parse_budget(budget_match.group(1), budget_match.group(2))
     else:
         # 匹配"X块钱"、"X元"
-        budget_match2 = re.search(r'(\d+)[块|元]', text)
+        budget_match2 = re.search(r'([0-9][0-9,]*(?:\.\d+)?)\s*(万)?\s*(?:块钱|块|元|人民币)', text)
         if budget_match2:
-            result["budget_cny"] = float(budget_match2.group(1))
+            result["budget_cny"] = parse_budget(budget_match2.group(1), budget_match2.group(2))
 
     # 同行人
     companion_map = {
@@ -359,7 +887,7 @@ async def search_places(
     """
     搜索目的地附近的景点、餐厅、咖啡馆等 POI。
 
-    使用 OpenTripMap API 搜索指定坐标范围内的兴趣点。
+    优先通过高德 MCP 的周边搜索获取结果；如果 MCP 不可用，再回退到 OpenTripMap。
     需要先调用 geocode_location 获取目的地的经纬度坐标。
 
     Args:
@@ -392,6 +920,23 @@ async def search_places(
         >>> await search_places(lat=30.25, lon=120.16, radius=10000, kinds="museums")
         [{"name": "浙江省博物馆", "category": "museums", ...}]
     """
+    mcp_payload = await maybe_call_mcp_tool(
+        "maps_around_search",
+        {
+            "location": f"{lon},{lat}",
+            "radius": str(radius),
+            "keywords": _amap_keyword_for_kinds(kinds),
+            # weight: 综合权重排序（人气/评分优先），避免默认按距离返回无名 POI
+            "sortrule": "weight",
+        },
+    )
+    if mcp_payload is not None:
+        mcp_results = await _normalize_amap_pois(mcp_payload, lat, lon, kinds)
+        if mcp_results is not None:
+            # 高德返回本身已按权重排过序，这里只做兜底：有评分的优先
+            mcp_results.sort(key=lambda p: (p.get("rating") or 0), reverse=True)
+            return mcp_results
+
     api_key = settings.opentripmap_api_key
     if not api_key:
         return _get_demo_poi_data(lat, lon, kinds)
@@ -512,7 +1057,7 @@ async def geocode_location(query: str) -> dict[str, Any]:
     """
     将地名转换为经纬度坐标。
 
-    使用 Nominatim（OpenStreetMap）免费地理编码服务。
+    优先通过高德 MCP 完成地理编码；如果 MCP 不可用，再回退到 Nominatim（OpenStreetMap）。
     这是 search_places 的前置步骤，需要先获取坐标才能搜索 POI。
 
     Args:
@@ -531,6 +1076,12 @@ async def geocode_location(query: str) -> dict[str, Any]:
         >>> await geocode_location("杭州")
         {"lat": 30.2485, "lon": 120.1468, "display_name": "杭州市, 浙江省, 中国", ...}
     """
+    mcp_payload = await maybe_call_mcp_tool("maps_geo", {"address": query})
+    if mcp_payload is not None:
+        mcp_result = _normalize_amap_geocode(mcp_payload, query)
+        if mcp_result is not None:
+            return mcp_result
+
     url = "https://nominatim.openstreetmap.org/search"
     params = {
         "q": query,
@@ -593,7 +1144,7 @@ async def estimate_route(
     """
     估算两点之间的路线距离和时间。
 
-    使用 OSRM（Open Source Routing Machine）免费路由服务。
+    优先通过高德 MCP 规划路线；如果 MCP 不可用，再回退到 OSRM。
     支持步行、驾车、骑行三种交通方式。
 
     Args:
@@ -620,6 +1171,22 @@ async def estimate_route(
         >>> await estimate_route(30.25, 120.16, 30.24, 120.15, "walking")
         {"distance": 1500.0, "duration": 1200.0, "distance_km": 1.5, ...}
     """
+    mcp_tool_name = {
+        "walking": "maps_direction_walking",
+        "cycling": "maps_bicycling",
+    }.get(profile, "maps_direction_driving")
+    mcp_payload = await maybe_call_mcp_tool(
+        mcp_tool_name,
+        {
+            "origin": f"{start_lon},{start_lat}",
+            "destination": f"{end_lon},{end_lat}",
+        },
+    )
+    if mcp_payload is not None:
+        mcp_result = _normalize_amap_route(mcp_payload, profile)
+        if mcp_result is not None:
+            return mcp_result
+
     base_url = settings.osrm_base_url
     coords = f"{start_lon},{start_lat};{end_lon},{end_lat}"
     url = f"{base_url}/{coords}"
@@ -712,7 +1279,7 @@ async def get_weather(
     """
     查询指定位置的天气预报。
 
-    使用 Open-Meteo 免费天气 API，无需 API Key。
+    优先通过高德 MCP 查询天气；如果 MCP 不可用，再回退到 Open-Meteo。
     提供未来 1-14 天的天气预报，包括温度、降水概率和天气描述。
 
     Args:
@@ -736,6 +1303,25 @@ async def get_weather(
         >>> await get_weather(lat=30.25, lon=120.16, days=3)
         {"daily": [{"date": "2025-08-01", "temperature_max": 35, ...}], ...}
     """
+    mcp_city = ""
+    mcp_geocode_payload = await maybe_call_mcp_tool("maps_regeocode", {"location": f"{lon},{lat}"})
+    if mcp_geocode_payload is not None:
+        mcp_geocode = _mcp_dict_payload(mcp_geocode_payload)
+        if mcp_geocode:
+            mcp_city = str(
+                mcp_geocode.get("city")
+                or mcp_geocode.get("province")
+                or mcp_geocode.get("provice")
+                or ""
+            ).strip()
+
+    if mcp_city:
+        mcp_weather_payload = await maybe_call_mcp_tool("maps_weather", {"city": mcp_city})
+        if mcp_weather_payload is not None:
+            mcp_result = _normalize_amap_weather(mcp_weather_payload)
+            if mcp_result is not None:
+                return mcp_result
+
     # WMO 天气代码映射（中文）
     WEATHER_CODES = {
         0: "晴朗", 1: "大部晴朗", 2: "多云", 3: "阴天",
@@ -1010,6 +1596,141 @@ def request_confirmation(
         "requires_human": True,
         "source": "Safety Guard",
     }
+
+
+# ==================== 意图路由 / 行程问答 / 闲聊 辅助函数 ====================
+# 注意：这三个函数专供 graph.py 里的 intent_router/qa_responder/chitchat_responder
+# 节点内部调用，不注册进下面的 TOOLS 列表——TOOLS 是暴露给主 Agent 做
+# function calling 用的业务动作工具集，职责不同，混进去会导致意图分类工具
+# 被主 LLM 意外选用。
+
+def _get_async_openai_client():
+    """构建异步 OpenAI 客户端，复用项目现有的 DeepSeek 接入配置
+    （config.py 里的 openai_base_url/openai_api_key，走 OpenAI SDK 兼容接口）。"""
+    from openai import AsyncOpenAI
+    from config import settings
+
+    return AsyncOpenAI(
+        api_key=settings.openai_api_key,
+        base_url=settings.openai_base_url,
+    )
+
+
+@tool
+async def classify_intent(
+    user_input: str,
+    has_existing_itinerary: bool,
+    needs_clarification: bool,
+) -> dict:
+    """
+    用 LLM 判断用户这句话属于哪种意图场景。
+
+    Args:
+        user_input: 用户原始输入
+        has_existing_itinerary: 当前会话是否已经生成过完整行程
+        needs_clarification: 系统上一轮是否在等待用户补充缺失信息
+
+    Returns:
+        dict: {"intent": "new_plan|continue_clarify|faq_about_itinerary|chitchat", "confidence": float}
+        LLM 调用失败时返回 {"intent": "new_plan", "confidence": 0.0}，
+        调用方（intent_router 节点）会据此再走启发式规则兜底。
+    """
+    from agent.prompts import INTENT_CLASSIFICATION_PROMPT
+    from config import settings
+
+    client = _get_async_openai_client()
+    prompt = INTENT_CLASSIFICATION_PROMPT.format(
+        user_input=user_input,
+        has_existing_itinerary=has_existing_itinerary,
+        needs_clarification=needs_clarification,
+    )
+
+    try:
+        response = await client.chat.completions.create(
+            model=settings.openai_model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1,
+            max_tokens=100,
+            timeout=8,
+        )
+        raw_text = response.choices[0].message.content or ""
+        # LLM 偶尔会在 JSON 外加说明文字，兜底提取第一个 {...} 片段
+        import re
+        match = re.search(r"\{.*\}", raw_text, re.DOTALL)
+        json_text = match.group(0) if match else raw_text
+        result = json.loads(json_text)
+        if "intent" not in result:
+            raise ValueError(f"LLM 输出缺少 intent 字段: {raw_text!r}")
+        return result
+    except Exception as exc:
+        return {"intent": "new_plan", "confidence": 0.0, "error": str(exc)}
+
+
+@tool
+async def answer_itinerary_question(
+    question: str,
+    itinerary: str,
+    weather_summary: str,
+    budget_summary: str,
+) -> str:
+    """
+    基于已生成的行程内容，回答用户的追问。
+
+    Args:
+        question: 用户问题
+        itinerary: 完整行程 Markdown
+        weather_summary: 天气摘要文本
+        budget_summary: 预算摘要文本
+
+    Returns:
+        str: 回答文本
+    """
+    from agent.prompts import QA_ANSWER_PROMPT
+    from config import settings
+
+    client = _get_async_openai_client()
+    prompt = QA_ANSWER_PROMPT.format(
+        question=question,
+        itinerary=itinerary,
+        weather_summary=weather_summary,
+        budget_summary=budget_summary,
+    )
+
+    response = await client.chat.completions.create(
+        model=settings.openai_model,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.3,
+        max_tokens=400,
+        timeout=15,
+    )
+    return response.choices[0].message.content or "抱歉，暂时无法回答这个问题，请查看上方完整行程。"
+
+
+@tool
+async def generate_chitchat_reply(message: str) -> str:
+    """
+    生成闲聊回复。
+
+    Args:
+        message: 用户消息
+
+    Returns:
+        str: 回复文本
+    """
+    from agent.prompts import CHITCHAT_PROMPT
+    from config import settings
+
+    client = _get_async_openai_client()
+    prompt = CHITCHAT_PROMPT.format(message=message)
+
+    response = await client.chat.completions.create(
+        model=settings.openai_model,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7,
+        max_tokens=150,
+        timeout=8,
+    )
+    return response.choices[0].message.content or "很高兴和您聊天。有什么旅行规划需要帮助的吗？"
 
 
 # ==================== 工具注册表 ====================

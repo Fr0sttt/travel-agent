@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+const API_BASE = import.meta.env.VITE_API_BASE || '';
 
 export interface PlanRequest {
   user_input: string;
@@ -41,9 +41,19 @@ export interface SessionState {
   confirmation_required?: Array<Record<string, unknown>>;
   risk_alerts?: string[];
   tool_calls?: Array<Record<string, unknown>>;
-  messages?: Array<{ role: string; content: string; node?: string }>;
+  messages?: Array<{ role: string; content: string; node?: string; timestamp?: string }>;
   needs_clarification?: boolean;
   [key: string]: unknown;
+}
+
+export interface SessionSummary {
+  session_id: string;
+  title: string;
+  preview: string;
+  message_count: number;
+  created_at: string;
+  updated_at: string;
+  last_message_at: string;
 }
 
 function buildUrl(path: string): string {
@@ -147,6 +157,33 @@ export async function getSession(sessionId: string): Promise<SessionState> {
   }
 
   return (await response.json()) as SessionState;
+}
+
+export async function listSessions(): Promise<{ count: number; sessions: SessionSummary[] }> {
+  const response = await fetch(buildUrl('/api/sessions'), {
+    headers: { Accept: 'application/json' },
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => 'Unknown error');
+    throw new Error(`HTTP ${response.status}: ${text}`);
+  }
+
+  return (await response.json()) as { count: number; sessions: SessionSummary[] };
+}
+
+export async function deleteSession(sessionId: string): Promise<{ status: string; message: string }> {
+  const response = await fetch(buildUrl(`/api/sessions/${sessionId}`), {
+    method: 'DELETE',
+    headers: { Accept: 'application/json' },
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => 'Unknown error');
+    throw new Error(`HTTP ${response.status}: ${text}`);
+  }
+
+  return (await response.json()) as { status: string; message: string };
 }
 
 export async function checkHealth(): Promise<{ status: string; version: string; dependencies: Record<string, string> }> {

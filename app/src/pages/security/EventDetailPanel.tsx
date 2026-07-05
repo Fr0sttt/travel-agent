@@ -15,14 +15,20 @@ import {
   Link2,
 } from 'lucide-react';
 import type { SecurityEvent } from './data';
-import { severityColors, statusColors, statusBgColors } from './data';
+import {
+  severityColors,
+  statusColors,
+  statusBgColors,
+  severityLabels,
+  statusLabels,
+} from './data';
 
 interface EventDetailPanelProps {
   event: SecurityEvent | null;
 }
 
 function formatDate(ts: string): string {
-  return new Date(ts).toLocaleString('en-US', {
+  return new Date(ts).toLocaleString('zh-CN', {
     month: 'long',
     day: 'numeric',
     year: 'numeric',
@@ -68,7 +74,7 @@ export default function EventDetailPanel({ event }: EventDetailPanelProps) {
               className="text-base text-center"
               style={{ color: 'rgba(255,255,255,0.3)' }}
             >
-              Select an event to view details
+              选择一个事件查看详情
             </p>
           </motion.div>
         ) : (
@@ -91,7 +97,7 @@ export default function EventDetailPanel({ event }: EventDetailPanelProps) {
                   }}
                 >
                   {severityIcons[event.severity]}
-                  {event.severity}
+                  {severityLabels[event.severity]}
                 </span>
                 <span
                   className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium"
@@ -103,7 +109,7 @@ export default function EventDetailPanel({ event }: EventDetailPanelProps) {
                   {event.status === 'Resolved' && <CheckCircle className="w-3 h-3" />}
                   {event.status === 'Pending' && <Clock className="w-3 h-3" />}
                   {event.status === 'Dismissed' && <XCircle className="w-3 h-3" />}
-                  {event.status}
+                  {statusLabels[event.status]}
                 </span>
               </div>
               <h2
@@ -133,7 +139,7 @@ export default function EventDetailPanel({ event }: EventDetailPanelProps) {
               transition={{ delay: 0.05 }}
             >
               <h3 className="text-sm font-semibold text-[#8ECAE6] mb-2">
-                Description
+                事件描述
               </h3>
               <p className="text-sm leading-relaxed" style={{ color: '#EDF6F9' }}>
                 {event.description}
@@ -150,7 +156,7 @@ export default function EventDetailPanel({ event }: EventDetailPanelProps) {
             >
               <div className="flex items-center gap-2 mb-2">
                 <Brain className="w-4 h-4 text-[#8ECAE6]" />
-                <h3 className="text-sm font-semibold text-[#8ECAE6]">AI Analysis</h3>
+                <h3 className="text-sm font-semibold text-[#8ECAE6]">AI 分析</h3>
               </div>
               <p
                 className="text-sm leading-relaxed"
@@ -159,7 +165,7 @@ export default function EventDetailPanel({ event }: EventDetailPanelProps) {
                 {event.aiReasoning}
               </p>
               <p className="mt-2 text-xs font-mono" style={{ color: '#2EC4B6' }}>
-                Confidence: {event.confidence}%
+                置信度：{event.confidence}%
               </p>
             </motion.div>
 
@@ -171,7 +177,7 @@ export default function EventDetailPanel({ event }: EventDetailPanelProps) {
             >
               <div className="flex items-center gap-2 mb-2">
                 <BookOpen className="w-4 h-4 text-[#8ECAE6]" />
-                <h3 className="text-sm font-semibold text-[#8ECAE6]">Data Sources</h3>
+                <h3 className="text-sm font-semibold text-[#8ECAE6]">数据来源</h3>
               </div>
               <ul className="space-y-2">
                 {event.sources.map((s, i) => (
@@ -199,7 +205,7 @@ export default function EventDetailPanel({ event }: EventDetailPanelProps) {
               <div className="flex items-center gap-2 mb-2">
                 <Lightbulb className="w-4 h-4 text-[#8ECAE6]" />
                 <h3 className="text-sm font-semibold text-[#8ECAE6]">
-                  Recommended Actions
+                  建议措施
                 </h3>
               </div>
               <ol className="space-y-2">
@@ -229,7 +235,7 @@ export default function EventDetailPanel({ event }: EventDetailPanelProps) {
                 className="flex items-center gap-2 w-full"
               >
                 <FileText className="w-4 h-4 text-[#8ECAE6]" />
-                <h3 className="text-sm font-semibold text-[#8ECAE6]">Raw Log</h3>
+                <h3 className="text-sm font-semibold text-[#8ECAE6]">原始日志</h3>
                 {rawLogOpen ? (
                   <ChevronUp className="w-4 h-4 text-[rgba(255,255,255,0.3)] ml-auto" />
                 ) : (
@@ -269,7 +275,7 @@ export default function EventDetailPanel({ event }: EventDetailPanelProps) {
                 <div className="flex items-center gap-2 mb-3">
                   <History className="w-4 h-4 text-[#8ECAE6]" />
                   <h3 className="text-sm font-semibold text-[#8ECAE6]">
-                    Decision Log
+                    决策日志
                   </h3>
                 </div>
                 <div className="space-y-2">
@@ -311,7 +317,7 @@ export default function EventDetailPanel({ event }: EventDetailPanelProps) {
                 <div className="flex items-center gap-2 mb-2">
                   <Link2 className="w-4 h-4 text-[#8ECAE6]" />
                   <h3 className="text-sm font-semibold text-[#8ECAE6]">
-                    Related Events
+                    相关事件
                   </h3>
                 </div>
                 <div className="space-y-1.5">

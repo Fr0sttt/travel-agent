@@ -24,11 +24,11 @@ export default function EventTimeline({
           style={{ background: 'rgba(255,255,255,0.05)' }}
         >
           <span className="text-2xl" style={{ color: 'rgba(255,255,255,0.15)' }}>
-            No events
+            无事件
           </span>
         </div>
         <p className="text-sm" style={{ color: 'rgba(255,255,255,0.3)' }}>
-          No security events match your filters
+          没有安全事件与您的筛选条件匹配
         </p>
       </div>
     );

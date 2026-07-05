@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { Compass } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import type { ChatMessage } from './mockData';
 import ReasoningChain from './ReasoningChain';
 import ToolCallCard from './ToolCallCard';
@@ -102,6 +103,7 @@ export default function MessageBubble({ message, isLatest = false }: MessageBubb
               style={{ fontFamily: "'Inter Variable', Inter, sans-serif", fontSize: '0.9375rem', lineHeight: 1.6 }}
             >
               <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
                 components={{
                   h1: ({ children }) => <h1 className="text-base font-semibold text-white mt-3 mb-2">{children}</h1>,
                   h2: ({ children }) => <h2 className="text-sm font-semibold text-white mt-3 mb-1.5">{children}</h2>,
@@ -112,6 +114,15 @@ export default function MessageBubble({ message, isLatest = false }: MessageBubb
                   li: ({ children }) => <li className="text-[#EDF6F9]">{children}</li>,
                   strong: ({ children }) => <strong className="text-white font-semibold">{children}</strong>,
                   code: ({ children }) => <code className="px-1 py-0.5 rounded text-[11px]" style={{ background: 'rgba(0,0,0,0.25)', fontFamily: "'JetBrains Mono Variable', monospace" }}>{children}</code>,
+                  table: ({ children }) => (
+                    <div className="overflow-x-auto mb-2 rounded-lg border" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
+                      <table className="w-full text-xs border-collapse">{children}</table>
+                    </div>
+                  ),
+                  thead: ({ children }) => <thead style={{ background: 'rgba(255,255,255,0.06)' }}>{children}</thead>,
+                  tr: ({ children }) => <tr className="border-b" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>{children}</tr>,
+                  th: ({ children }) => <th className="px-2.5 py-1.5 text-left font-semibold text-white">{children}</th>,
+                  td: ({ children }) => <td className="px-2.5 py-1.5 text-[#EDF6F9]">{children}</td>,
                 }}
               >
                 {message.content}

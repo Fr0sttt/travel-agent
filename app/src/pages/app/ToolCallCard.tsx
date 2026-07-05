@@ -14,6 +14,13 @@ const categoryColors: Record<string, string> = {
   safety: '#E29578',
 };
 
+const categoryLabels: Record<string, string> = {
+  db: '数据库',
+  api: '接口',
+  calc: '计算',
+  safety: '安全',
+};
+
 const statusConfig = {
   running: { icon: Loader2, color: '#FFD166', bg: 'rgba(255,209,102,0.1)', spin: true },
   completed: { icon: CheckCircle2, color: '#06D6A0', bg: 'rgba(6,214,160,0.1)', spin: false },
@@ -46,7 +53,7 @@ export default function ToolCallCard({ toolCall }: ToolCallCardProps) {
             className="flex-shrink-0 text-[10px] px-1.5 py-0.5 rounded"
             style={{ color: categoryColors[toolCall.category] || '#2EC4B6', background: `${categoryColors[toolCall.category]}15` || 'rgba(46,196,182,0.1)', fontFamily: "'JetBrains Mono Variable', monospace" }}
           >
-            {toolCall.category.toUpperCase()}
+            {categoryLabels[toolCall.category] || toolCall.category.toUpperCase()}
           </span>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
@@ -77,7 +84,7 @@ export default function ToolCallCard({ toolCall }: ToolCallCardProps) {
               {/* Parameters */}
               <div>
                 <span className="text-[10px] uppercase tracking-wider" style={{ color: '#8ECAE6', fontFamily: "'JetBrains Mono Variable', monospace" }}>
-                  Parameters
+                  参数
                 </span>
                 <pre
                   className="mt-1 p-2 rounded text-xs overflow-x-auto"
@@ -96,7 +103,7 @@ export default function ToolCallCard({ toolCall }: ToolCallCardProps) {
               {toolCall.result && (
                 <div>
                   <span className="text-[10px] uppercase tracking-wider" style={{ color: '#2EC4B6', fontFamily: "'JetBrains Mono Variable', monospace" }}>
-                    Result
+                    结果
                   </span>
                   <p
                     className="mt-1 p-2 rounded text-xs"

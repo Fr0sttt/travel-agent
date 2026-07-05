@@ -29,45 +29,45 @@ interface NotificationCategory {
 
 const categories: NotificationCategory[] = [
   {
-    title: 'Travel Alerts',
+    title: '旅行提醒',
     masterKey: 'travelAlerts',
     items: [
-      { key: 'safetyAlerts', label: 'Safety alerts for my destination' },
-      { key: 'weatherWarnings', label: 'Weather warnings' },
-      { key: 'travelAdvisory', label: 'Travel advisory updates' },
-      { key: 'flightChanges', label: 'Flight/transport changes' },
+      { key: 'safetyAlerts', label: '目的地的安全提醒' },
+      { key: 'weatherWarnings', label: '天气警告' },
+      { key: 'travelAdvisory', label: '旅行建议更新' },
+      { key: 'flightChanges', label: '航班/交通变更' },
     ],
   },
   {
-    title: 'Trip Reminders',
+    title: '行程提醒',
     masterKey: 'tripReminders',
     items: [
-      { key: 'dayBeforeSummary', label: 'Day-before trip summary' },
-      { key: 'dailyItinerary', label: 'Daily itinerary reminders' },
-      { key: 'reservationConfirmations', label: 'Reservation confirmations' },
+      { key: 'dayBeforeSummary', label: '行程前一天的总结' },
+      { key: 'dailyItinerary', label: '每日行程提醒' },
+      { key: 'reservationConfirmations', label: '预订确认' },
     ],
   },
   {
-    title: 'AI Agent Updates',
+    title: 'AI 代理更新',
     masterKey: 'aiUpdates',
     items: [
-      { key: 'itineraryReady', label: 'When itinerary is ready' },
-      { key: 'evaluationUpdates', label: 'Evaluation score updates' },
-      { key: 'safetyReview', label: 'Safety review completed' },
+      { key: 'itineraryReady', label: '行程准备就绪' },
+      { key: 'evaluationUpdates', label: '评分更新' },
+      { key: 'safetyReview', label: '安全审查完成' },
     ],
   },
 ];
 
 const channelOptions = [
-  { key: 'inApp', label: 'In-App', icon: Bell },
-  { key: 'email', label: 'Email', icon: Mail },
-  { key: 'push', label: 'Push', icon: Smartphone },
+  { key: 'inApp', label: '应用内', icon: Bell },
+  { key: 'email', label: '电子邮件', icon: Mail },
+  { key: 'push', label: '推送通知', icon: Smartphone },
 ];
 
 const frequencyOptions = [
-  { key: 'realtime', label: 'Real-time' },
-  { key: 'daily', label: 'Daily digest' },
-  { key: 'weekly', label: 'Weekly digest' },
+  { key: 'realtime', label: '实时' },
+  { key: 'daily', label: '每日摘要' },
+  { key: 'weekly', label: '每周摘要' },
 ];
 
 export default function NotificationsTab() {
@@ -121,10 +121,10 @@ export default function NotificationsTab() {
       {/* Header */}
       <motion.div variants={itemVariants}>
         <h2 className="font-display text-[2.5rem] font-semibold text-white leading-tight">
-          Notifications
+          通知
         </h2>
         <p className="mt-2 text-base" style={{ color: 'rgba(255,255,255,0.5)' }}>
-          Choose how and when we contact you
+          选择我们如何以及何时联系您
         </p>
       </motion.div>
 
@@ -168,7 +168,7 @@ export default function NotificationsTab() {
         className="mt-6 p-6 rounded-[12px] border border-[rgba(255,255,255,0.08)]"
         style={{ background: 'rgba(255,255,255,0.05)', backdropFilter: 'blur(16px)' }}
       >
-        <h3 className="text-xl font-semibold text-white">Send notifications via</h3>
+        <h3 className="text-xl font-semibold text-white">通知接收方式</h3>
         <div className="mt-4 flex flex-wrap gap-6">
           {channelOptions.map((channel) => {
             const Icon = channel.icon;
@@ -193,9 +193,9 @@ export default function NotificationsTab() {
         className="mt-5 p-6 rounded-[12px] border border-[rgba(255,255,255,0.08)]"
         style={{ background: 'rgba(255,255,255,0.05)', backdropFilter: 'blur(16px)' }}
       >
-        <h3 className="text-xl font-semibold text-white">Notification Frequency</h3>
+        <h3 className="text-xl font-semibold text-white">通知频率</h3>
         <p className="text-sm mt-1" style={{ color: 'rgba(255,255,255,0.4)' }}>
-          How often would you like to receive non-urgent notifications?
+          您希望多频繁地接收非紧急通知？
         </p>
         <div className="mt-4 flex flex-wrap gap-3">
           {frequencyOptions.map((option) => (
@@ -225,16 +225,16 @@ export default function NotificationsTab() {
           {saveState === 'saving' && (
             <span className="inline-flex items-center gap-2">
               <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              Saving...
+              保存中...
             </span>
           )}
           {saveState === 'saved' && (
             <span className="inline-flex items-center gap-2 text-[#06D6A0]">
               <Check className="w-4 h-4" />
-              Saved!
+              已保存！
             </span>
           )}
-          {saveState === 'idle' && 'Save Changes'}
+          {saveState === 'idle' && '保存更改'}
         </Button>
       </motion.div>
     </motion.div>

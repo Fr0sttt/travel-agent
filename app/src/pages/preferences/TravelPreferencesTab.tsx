@@ -25,59 +25,59 @@ const itemVariants = {
 };
 
 const travelStyleTags = [
-  'Solo Travel',
-  'Couple',
-  'Family',
-  'Group',
-  'Backpacking',
-  'Luxury',
-  'Adventure',
-  'Cultural',
-  'Relaxation',
-  'Foodie',
-  'Photography',
-  'Business',
+  '独自旅行',
+  '情侣',
+  '家庭',
+  '团体',
+  '背包旅行',
+  '奢华',
+  '冒险',
+  '文化',
+  '放松',
+  '美食',
+  '摄影',
+  '商务',
 ];
 
 const accommodationOptions = [
-  { id: 'hotels', label: 'Hotels', icon: Building2 },
-  { id: 'boutique', label: 'Boutique', icon: Gem },
-  { id: 'hostels', label: 'Hostels', icon: Users },
+  { id: 'hotels', label: '酒店', icon: Building2 },
+  { id: 'boutique', label: '精品酒店', icon: Gem },
+  { id: 'hostels', label: '青年旅舍', icon: Users },
   { id: 'airbnb', label: 'Airbnb', icon: Home },
-  { id: 'resorts', label: 'Resorts', icon: Umbrella },
-  { id: 'camping', label: 'Camping', icon: Tent },
+  { id: 'resorts', label: '度假村', icon: Umbrella },
+  { id: 'camping', label: '露营', icon: Tent },
 ];
 
 const activities = [
-  'Sightseeing',
-  'Museums',
-  'Nature & Hikes',
-  'Food & Dining',
-  'Shopping',
-  'Nightlife',
-  'Beach & Water',
-  'Historical Sites',
-  'Local Culture',
-  'Photography',
-  'Sports',
-  'Wellness & Spa',
+  '观光',
+  '博物馆',
+  '自然和登山',
+  '美食和餐饮',
+  '购物',
+  '夜生活',
+  '海滩和水上活动',
+  '历史遗迹',
+  '本地文化',
+  '摄影',
+  '运动',
+  '健康和水疗',
 ];
 
 const dietaryTags = [
-  'No Restrictions',
-  'Vegetarian',
-  'Vegan',
-  'Halal',
-  'Kosher',
-  'Gluten-Free',
-  'Nut Allergy',
-  'Lactose Intolerant',
+  '无限制',
+  '素食',
+  '纯素',
+  '清真',
+  '犹太食',
+  '无麸质',
+  '坚果过敏',
+  '乳糖不耐受',
 ];
 
 const budgetPresets = [
-  { label: 'Budget', range: [50, 150] as [number, number] },
-  { label: 'Mid', range: [150, 400] as [number, number] },
-  { label: 'Luxury', range: [400, 1000] as [number, number] },
+  { label: '经济', range: [50, 150] as [number, number] },
+  { label: '中等', range: [150, 400] as [number, number] },
+  { label: '奢华', range: [400, 1000] as [number, number] },
 ];
 
 export default function TravelPreferencesTab() {
@@ -145,10 +145,10 @@ export default function TravelPreferencesTab() {
       {/* Header */}
       <motion.div variants={itemVariants}>
         <h2 className="font-display text-[2.5rem] font-semibold text-white leading-tight">
-          Travel Preferences
+          旅行偏好
         </h2>
         <p className="mt-2 text-base" style={{ color: 'rgba(255,255,255,0.5)' }}>
-          Help us understand your travel style for better recommendations
+          帮助我们了解您的旅行风格，为您提供更好的建议
         </p>
       </motion.div>
 
@@ -158,9 +158,9 @@ export default function TravelPreferencesTab() {
         className="mt-8 p-6 rounded-[12px] border border-[rgba(255,255,255,0.08)]"
         style={{ background: 'rgba(255,255,255,0.05)', backdropFilter: 'blur(16px)' }}
       >
-        <h3 className="text-xl font-semibold text-white">Typical Trip Budget</h3>
+        <h3 className="text-xl font-semibold text-white">典型旅行预算</h3>
         <p className="text-sm mt-1" style={{ color: 'rgba(255,255,255,0.4)' }}>
-          Per person, per day (excluding flights)
+          每人每天（不含航班）
         </p>
 
         <div className="mt-6 flex items-center gap-6">
@@ -203,9 +203,9 @@ export default function TravelPreferencesTab() {
         className="mt-5 p-6 rounded-[12px] border border-[rgba(255,255,255,0.08)]"
         style={{ background: 'rgba(255,255,255,0.05)', backdropFilter: 'blur(16px)' }}
       >
-        <h3 className="text-xl font-semibold text-white">Travel Style</h3>
+        <h3 className="text-xl font-semibold text-white">旅行风格</h3>
         <p className="text-sm mt-1" style={{ color: 'rgba(255,255,255,0.4)' }}>
-          Select all that apply
+          选择所有适用的选项
         </p>
         <div className="mt-4 flex flex-wrap gap-2.5">
           {travelStyleTags.map((tag) => (
@@ -230,7 +230,7 @@ export default function TravelPreferencesTab() {
         className="mt-5 p-6 rounded-[12px] border border-[rgba(255,255,255,0.08)]"
         style={{ background: 'rgba(255,255,255,0.05)', backdropFilter: 'blur(16px)' }}
       >
-        <h3 className="text-xl font-semibold text-white">Where You Like to Stay</h3>
+        <h3 className="text-xl font-semibold text-white">您的住宿偏好</h3>
         <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 gap-3">
           {accommodationOptions.map((option) => {
             const Icon = option.icon;
@@ -258,9 +258,9 @@ export default function TravelPreferencesTab() {
         className="mt-5 p-6 rounded-[12px] border border-[rgba(255,255,255,0.08)]"
         style={{ background: 'rgba(255,255,255,0.05)', backdropFilter: 'blur(16px)' }}
       >
-        <h3 className="text-xl font-semibold text-white">Favorite Activities</h3>
+        <h3 className="text-xl font-semibold text-white">最喜爱的活动</h3>
         <p className="text-sm mt-1" style={{ color: 'rgba(255,255,255,0.4)' }}>
-          Rate your interest (1-5 stars)
+          评分您的兴趣（1-5 星）
         </p>
         <div className="mt-4 space-y-3">
           {activities.map((activity) => (
@@ -294,7 +294,7 @@ export default function TravelPreferencesTab() {
         className="mt-5 p-6 rounded-[12px] border border-[rgba(255,255,255,0.08)]"
         style={{ background: 'rgba(255,255,255,0.05)', backdropFilter: 'blur(16px)' }}
       >
-        <h3 className="text-xl font-semibold text-white">Dietary Needs</h3>
+        <h3 className="text-xl font-semibold text-white">饮食需求</h3>
         <div className="mt-4 flex flex-wrap gap-2.5">
           {dietaryTags.map((tag) => (
             <button
@@ -320,9 +320,9 @@ export default function TravelPreferencesTab() {
       >
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-xl font-semibold text-white">Mobility Needs</h3>
+            <h3 className="text-xl font-semibold text-white">行动不便需求</h3>
             <p className="text-sm mt-1" style={{ color: 'rgba(255,255,255,0.4)' }}>
-              I have mobility considerations
+              我有行动不便的考虑
             </p>
           </div>
           <Switch
@@ -341,7 +341,7 @@ export default function TravelPreferencesTab() {
             <Textarea
               value={mobilityNote}
               onChange={(e) => setMobilityNote(e.target.value)}
-              placeholder="Describe any mobility needs (wheelchair access, limited walking, etc.)"
+              placeholder="描述任何行动不便的需求（轮椅通道、行走受限等）"
               className="min-h-[80px] bg-[rgba(255,255,255,0.06)] border-[rgba(255,255,255,0.1)] text-white placeholder:text-[rgba(255,255,255,0.3)] focus:border-[#219EBC] rounded-[8px]"
             />
           </motion.div>
@@ -359,16 +359,16 @@ export default function TravelPreferencesTab() {
           {saveState === 'saving' && (
             <span className="inline-flex items-center gap-2">
               <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              Saving...
+              保存中...
             </span>
           )}
           {saveState === 'saved' && (
             <span className="inline-flex items-center gap-2 text-[#06D6A0]">
               <Check className="w-4 h-4" />
-              Saved!
+              已保存！
             </span>
           )}
-          {saveState === 'idle' && 'Save Changes'}
+          {saveState === 'idle' && '保存更改'}
         </Button>
       </motion.div>
     </motion.div>
