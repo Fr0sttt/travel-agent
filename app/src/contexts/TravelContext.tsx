@@ -338,24 +338,33 @@ export function TravelProvider({ children }: { children: React.ReactNode }) {
       appendAssistantMessage('开始处理…');
       setStatus('processing');
       setError(null);
+      let receivedTerminalEvent = false;
+      const handleStreamEvent = (event: SSEvent) => {
+        if (event.type === 'clarify' || event.type === 'reply' || event.type === 'complete' || event.type === 'error') {
+          receivedTerminalEvent = true;
+        }
+        void handleEvent(event);
+      };
 
       try {
         if (!sessionId) {
           await streamPlan(
             { user_input: text },
-            (event) => handleEvent(event),
+            handleStreamEvent,
             controller.signal,
           );
         } else {
           await streamChat(
             { message: text, session_id: sessionId },
-            (event) => handleEvent(event),
+            handleStreamEvent,
             controller.signal,
           );
         }
       } catch (err) {
         if ((err as Error).name === 'AbortError') return;
         if (requestIdRef.current !== requestId) return;
+        // 隧道层可能在最终 SSE 事件之后报 chunked 结束异常，此时不要覆盖已展示的业务结果。
+        if (receivedTerminalEvent) return;
         const message = err instanceof Error ? err.message : String(err);
         setStatus('error');
         setError(message);
