@@ -6822,7 +6822,7 @@ networks:
 # .env.example
 
 # === OpenAI ===
-OPENAI_API_KEY=sk-your-openai-api-key
+OPENAI_API_KEY=
 OPENAI_MODEL=gpt-4o
 
 # === API Keys ===
