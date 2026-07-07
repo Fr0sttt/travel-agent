@@ -454,6 +454,7 @@ async def destination_search(state: TravelState) -> TravelState:
     Returns:
         更新后的状态
     """
+    from agent.guide_search import search_guide_pois
     from agent.tools import geocode_location, search_places
 
     preference = state.get("preference") or {}
@@ -521,6 +522,47 @@ async def destination_search(state: TravelState) -> TravelState:
         return poi_name
 
     # 总是搜索 interesting_places 作为基础
+    def _add_poi(poi: dict) -> bool:
+        name = poi.get("name", "")
+        if not name or name in seen_names:
+            return False
+        parent = _parent_key(name)
+        if parent in seen_parents:
+            return False
+        seen_names.add(name)
+        seen_parents.add(parent)
+        all_pois.append(poi)
+        return True
+
+    try:
+        duration_days = pref_dict.get("duration_days")
+        guide_result = await search_guide_pois(
+            city=destination,
+            days=int(duration_days) if duration_days else None,
+            interests=interests if isinstance(interests, list) else None,
+            center_lat=lat,
+            center_lon=lon,
+        )
+        for p in guide_result.get("poi_list") or []:
+            if isinstance(p, dict):
+                _add_poi(p)
+        if guide_result.get("error"):
+            state["risk_alerts"].append(str(guide_result["error"]))
+        state["tool_calls"].append({
+            "tool_name": "guide_search",
+            "input": {"destination": destination, "interests": interests},
+            "output": {
+                "enabled": guide_result.get("enabled"),
+                "cached": guide_result.get("cached"),
+                "candidate_count": guide_result.get("candidate_count", 0),
+                "poi_count": len(guide_result.get("poi_list") or []),
+                "error": guide_result.get("error"),
+            },
+            "timestamp": datetime.now().isoformat(),
+        })
+    except Exception as e:
+        state["risk_alerts"].append(f"攻略搜索增强失败: {str(e)}")
+
     search_kinds = set()
     for interest in interests:
         for kind in kind_mapping.get(interest, ["interesting_places"]):
@@ -542,15 +584,7 @@ async def destination_search(state: TravelState) -> TravelState:
                 places = json.loads(places)
 
             for p in places or []:
-                name = p.get("name", "")
-                if not name or name in seen_names:
-                    continue
-                parent = _parent_key(name)
-                if parent in seen_parents:
-                    continue
-                seen_names.add(name)
-                seen_parents.add(parent)
-                all_pois.append(p)
+                _add_poi(p)
         except Exception as e:
             state["risk_alerts"].append(f"搜索 {kind} 失败: {str(e)}")
             continue

@@ -144,6 +144,40 @@ class Settings(BaseSettings):
         gt=0,
     )
 
+    # ==================== JustOneAPI 小红书攻略源 ====================
+    justoneapi_enabled: bool = Field(default=False, description="是否启用 JustOneAPI 小红书攻略搜索")
+    justoneapi_key: str = Field(default="", description="JustOneAPI 访问令牌")
+    justoneapi_base_url: str = Field(
+        default="https://api.justoneapi.com",
+        description="JustOneAPI 基础 URL，大陆网络不稳定时可改为 http://47.117.133.51:30015",
+    )
+    justoneapi_timeout: int = Field(default=30, description="JustOneAPI 请求超时（秒）", gt=0)
+    justoneapi_cache_dir: str = Field(
+        default="./runtime/justoneapi_cache",
+        description="JustOneAPI 小红书搜索结果本地缓存目录",
+    )
+    justoneapi_cache_ttl_hours: int = Field(default=168, description="JustOneAPI 缓存有效期（小时）", ge=1)
+    justoneapi_max_notes_per_plan: int = Field(default=12, description="每次规划最多解析的小红书笔记数", ge=1)
+    justoneapi_max_pois_per_plan: int = Field(default=8, description="每次规划最多引入的小红书候选 POI 数", ge=1)
+
+    # ==================== DeepSeek 提取配置 ====================
+    deepseek_enabled: bool = Field(default=True, description="是否启用 DeepSeek 作为攻略候选抽取器")
+    deepseek_api_key: str = Field(default="", description="DeepSeek API 密钥")
+    deepseek_base_url: str = Field(
+        default="https://api.deepseek.com",
+        description="DeepSeek API 基础 URL",
+    )
+    deepseek_model: str = Field(
+        default="deepseek-v4-flash",
+        description="DeepSeek 候选抽取模型",
+    )
+    deepseek_timeout: int = Field(default=30, description="DeepSeek 请求超时（秒）", gt=0)
+    deepseek_max_notes_per_request: int = Field(
+        default=8,
+        description="单次提交给 DeepSeek 的笔记数上限",
+        ge=1,
+    )
+
     # ==================== Mem0 配置 ====================
     mem0_api_key: str = Field(default="", description="Mem0 API 密钥")
     mem0_chroma_path: str = Field(

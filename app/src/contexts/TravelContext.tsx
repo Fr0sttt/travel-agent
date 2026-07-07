@@ -91,6 +91,7 @@ export function TravelProvider({ children }: { children: React.ReactNode }) {
   const abortControllerRef = useRef<AbortController | null>(null);
   const assistantMessageIdRef = useRef<string | null>(null);
   const requestIdRef = useRef(0);
+  const lastKnownSessionIdRef = useRef<string | null>(null);
 
   const dashboardData = useMemo(() => {
     if (!sessionState) {
@@ -224,6 +225,9 @@ export function TravelProvider({ children }: { children: React.ReactNode }) {
   }, [refreshSessions, sessionId]);
 
   const handleEvent = useCallback(async (event: SSEvent) => {
+    if ('session_id' in event && event.session_id) {
+      lastKnownSessionIdRef.current = event.session_id;
+    }
     switch (event.type) {
       case 'status': {
         setSessionId(event.session_id);
@@ -363,9 +367,59 @@ export function TravelProvider({ children }: { children: React.ReactNode }) {
       } catch (err) {
         if ((err as Error).name === 'AbortError') return;
         if (requestIdRef.current !== requestId) return;
-        // 隧道层可能在最终 SSE 事件之后报 chunked 结束异常，此时不要覆盖已展示的业务结果。
-        if (receivedTerminalEvent) return;
         const message = err instanceof Error ? err.message : String(err);
+        const interruptedStream = /ERR_INCOMPLETE_CHUNKED_ENCODING|network error|Failed to fetch/i.test(message);
+        const recoveredSessionId = lastKnownSessionIdRef.current ?? sessionId;
+
+        // 隧道层可能把 SSE 正常收尾误判成断流，也可能是在长任务中间断线。
+        // 这两种情况都优先尝试从后端把已经落库的会话状态捞回来。
+        if (interruptedStream && recoveredSessionId) {
+          try {
+            const state = await getSession(recoveredSessionId);
+            setSessionId(recoveredSessionId);
+            setSessionState(state);
+
+            const itinerary = typeof state.itinerary === 'string' ? state.itinerary.trim() : '';
+            if (itinerary) {
+              setStatus('complete');
+              updateAssistantMessage((msg) => ({
+                ...msg,
+                content: itinerary,
+                isStreaming: false,
+              }));
+              toast.success('行程已生成');
+            } else if (state.needs_clarification) {
+              const lastMessage = Array.isArray(state.messages) && state.messages.length > 0
+                ? state.messages[state.messages.length - 1]
+                : null;
+              const followUp = typeof lastMessage?.content === 'string' && lastMessage.content.trim()
+                ? lastMessage.content
+                : '请补充更多信息';
+              setStatus('needs_input');
+              updateAssistantMessage((msg) => ({
+                ...msg,
+                content: followUp,
+                isStreaming: false,
+              }));
+              toast.info('连接已中断，但会话已保存', { description: '继续输入即可接上当前会话。' });
+            } else {
+              const node = String(state.current_node || '未知阶段');
+              setStatus('idle');
+              updateAssistantMessage((msg) => ({
+                ...msg,
+                content: `连接已中断，但后端已保存当前进度（${node}），继续输入即可续上。`,
+                isStreaming: false,
+              }));
+              toast.info('连接已中断，但进度已保存', { description: `当前阶段：${node}` });
+            }
+            void refreshSessions();
+            return;
+          } catch {
+            // 捞不回来再走原始错误分支。
+          }
+        }
+
+        if (receivedTerminalEvent) return;
         setStatus('error');
         setError(message);
         updateAssistantMessage((msg) => ({
@@ -381,7 +435,7 @@ export function TravelProvider({ children }: { children: React.ReactNode }) {
         }
       }
     },
-    [sessionId, appendUserMessage, appendAssistantMessage, handleEvent, updateAssistantMessage],
+    [sessionId, appendUserMessage, appendAssistantMessage, handleEvent, updateAssistantMessage, refreshSessions],
   );
 
   const resetSession = useCallback(() => {

@@ -18,7 +18,7 @@ import os
 import json
 import sys
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any, AsyncGenerator
 
@@ -636,6 +636,54 @@ async def chat(
 
 # ==================== 流式 API (SSE) ====================
 
+
+async def _stream_with_keepalive(
+    source: AsyncGenerator[str, None],
+    *,
+    session_id: str,
+    heartbeat_seconds: int = 15,
+) -> AsyncGenerator[str, None]:
+    """给 SSE 流加一个轻量保活，避免长任务被中间层误断开。"""
+
+    queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+    async def producer() -> None:
+        try:
+            async for chunk in source:
+                await queue.put(chunk)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(f"[stream] session_id={session_id} SSE 生产者异常: {exc}", flush=True)
+            error_event = json.dumps(
+                {
+                    "type": "error",
+                    "message": f"流式输出异常: {exc}",
+                    "session_id": session_id,
+                },
+                ensure_ascii=False,
+            )
+            await queue.put(f"data: {error_event}\n\n")
+        finally:
+            await queue.put(None)
+
+    task = asyncio.create_task(producer())
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=heartbeat_seconds)
+            except asyncio.TimeoutError:
+                yield ": keepalive\n\n"
+                continue
+
+            if item is None:
+                break
+            yield item
+    finally:
+        task.cancel()
+        with suppress(asyncio.CancelledError, Exception):
+            await task
+
 @app.post("/api/plan/stream", tags=["行程规划"])
 async def create_plan_stream(request: PlanRequest) -> StreamingResponse:
     """
@@ -653,7 +701,10 @@ async def create_plan_stream(request: PlanRequest) -> StreamingResponse:
     agent: TravelAgent = app.state.agent
 
     async def event_generator() -> AsyncGenerator[str, None]:
-        async for chunk in agent.plan_travel(request.user_input, session_id):
+        async for chunk in _stream_with_keepalive(
+            agent.plan_travel(request.user_input, session_id),
+            session_id=session_id,
+        ):
             yield chunk
 
     return StreamingResponse(
@@ -683,7 +734,10 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
     agent: TravelAgent = app.state.agent
 
     async def event_generator() -> AsyncGenerator[str, None]:
-        async for chunk in agent.plan_travel(request.message, request.session_id):
+        async for chunk in _stream_with_keepalive(
+            agent.plan_travel(request.message, request.session_id),
+            session_id=request.session_id,
+        ):
             yield chunk
 
     return StreamingResponse(
