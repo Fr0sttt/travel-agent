@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Map, Clock, Calendar, BarChart3, Terminal, Brain, Shield, ChevronUp, ChevronDown, Activity, Sparkles, FileText } from 'lucide-react';
+import { Map, Clock, Calendar, BarChart3, Terminal, Brain, Shield, ChevronUp, ChevronDown, Activity, Sparkles } from 'lucide-react';
 import { useTravel } from '@/contexts/TravelContext';
 import ChatPanel from './app/ChatPanel';
 import MapPanel from './app/MapPanel';
@@ -10,10 +10,9 @@ import MetricsPanel from './app/MetricsPanel';
 import ToolCallsPanel from './app/ToolCallsPanel';
 import MemoryPanel from './app/MemoryPanel';
 import SafetyPanel from './app/SafetyPanel';
-import ProjectTechDesignPanel from './app/ProjectTechDesignPanel';
 
 type CenterTab = 'map' | 'timeline' | 'calendar';
-type RightTab = 'metrics' | 'tools' | 'memory' | 'tech' | 'safety';
+type RightTab = 'metrics' | 'tools' | 'memory' | 'safety';
 type BottomTab = 'log' | 'stream';
 
 const centerTabs: { id: CenterTab; label: string; icon: React.ElementType }[] = [
@@ -26,7 +25,6 @@ const rightTabs: { id: RightTab; label: string; icon: React.ElementType }[] = [
   { id: 'metrics', label: '指标', icon: BarChart3 },
   { id: 'tools', label: '工具', icon: Terminal },
   { id: 'memory', label: '记忆', icon: Brain },
-  { id: 'tech', label: '方案', icon: FileText },
   { id: 'safety', label: '安全', icon: Shield },
 ];
 
@@ -59,8 +57,6 @@ export default function AppDashboard() {
         return <ToolCallsPanel />;
       case 'memory':
         return <MemoryPanel />;
-      case 'tech':
-        return <ProjectTechDesignPanel />;
       case 'safety':
         return <SafetyPanel />;
       default:
@@ -74,7 +70,6 @@ export default function AppDashboard() {
     CALC: '#FF9F1C',
     SAFETY: '#E29578',
   };
-
   const categoryLabels: Record<string, string> = {
     DB: '数据',
     API: '接口',
@@ -84,9 +79,7 @@ export default function AppDashboard() {
 
   return (
     <div className="flex flex-col w-full" style={{ height: 'calc(100dvh - 64px)', background: '#0A2463' }}>
-      {/* 主体三栏布局 */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        {/* 左侧聊天区 */}
         <div
           className="flex-shrink-0 border-r overflow-hidden"
           style={{
@@ -98,7 +91,6 @@ export default function AppDashboard() {
           <ChatPanel />
         </div>
 
-        {/* 中间内容区 */}
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
           <div
             className="flex-shrink-0 h-12 flex items-center justify-end px-4 gap-2 border-b"
@@ -141,7 +133,6 @@ export default function AppDashboard() {
           </div>
         </div>
 
-        {/* 右侧功能区 */}
         <div
           className="flex-shrink-0 border-l overflow-hidden flex flex-col"
           style={{
@@ -199,7 +190,6 @@ export default function AppDashboard() {
         </div>
       </div>
 
-      {/* 底部折叠区 */}
       <div
         className="border-t transition-all duration-300 overflow-hidden"
         style={{

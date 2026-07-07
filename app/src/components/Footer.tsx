@@ -2,6 +2,7 @@ import { Link } from 'react-router';
 import { Compass, Github, Twitter, Linkedin } from 'lucide-react';
 
 const productLinks = [
+  { label: 'Project Intro', path: '/how-it-works' },
   { label: 'App Dashboard', path: '/app' },
   { label: 'Preferences', path: '/preferences' },
   { label: 'Security', path: '/security' },

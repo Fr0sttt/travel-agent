@@ -4,6 +4,7 @@ import { Menu, X, Compass } from 'lucide-react';
 
 const navLinks = [
   { label: '首页', path: '/' },
+  { label: '项目说明', path: '/how-it-works' },
   { label: '应用', path: '/app' },
   { label: '偏好设置', path: '/preferences' },
   { label: '安全', path: '/security' },
@@ -15,7 +16,6 @@ export default function Navbar() {
   return (
     <nav className="sticky top-0 z-[100] w-full h-16 border-b border-white/[0.06]" style={{ background: 'rgba(10, 36, 99, 0.9)', backdropFilter: 'blur(12px)' }}>
       <div className="max-w-[1440px] mx-auto h-full flex items-center justify-between px-6">
-        {/* Logo */}
         <Link to="/" className="flex items-center gap-2">
           <Compass className="w-5 h-5 text-[#EDF6F9] animate-spin-slow" />
           <span className="font-display text-xl font-bold text-white tracking-tight">
@@ -23,7 +23,6 @@ export default function Navbar() {
           </span>
         </Link>
 
-        {/* Desktop Nav Links */}
         <div className="hidden md:flex items-center gap-8">
           {navLinks.map((link) => (
             <Link
@@ -37,7 +36,6 @@ export default function Navbar() {
           ))}
         </div>
 
-        {/* CTA Button */}
         <div className="hidden md:block">
           <Link
             to="/app"
@@ -48,7 +46,6 @@ export default function Navbar() {
           </Link>
         </div>
 
-        {/* Mobile Hamburger */}
         <button
           className="md:hidden text-white p-2"
           onClick={() => setMobileOpen(!mobileOpen)}
@@ -58,7 +55,6 @@ export default function Navbar() {
         </button>
       </div>
 
-      {/* Mobile Drawer */}
       {mobileOpen && (
         <div className="md:hidden fixed inset-0 top-16 z-[99]" style={{ background: 'rgba(10, 36, 99, 0.98)' }}>
           <div className="flex flex-col items-center pt-12 gap-8">

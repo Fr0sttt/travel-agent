@@ -5,6 +5,7 @@ import Home from './pages/Home'
 import AppDashboard from './pages/AppDashboard'
 import Preferences from './pages/Preferences'
 import Security from './pages/Security'
+import HowItWorks from './pages/HowItWorks'
 
 export default function App() {
   return (
@@ -18,6 +19,7 @@ export default function App() {
         } />
         <Route path="/preferences" element={<Preferences />} />
         <Route path="/security" element={<Security />} />
+        <Route path="/how-it-works" element={<HowItWorks />} />
       </Routes>
     </Layout>
   )
