@@ -141,13 +141,6 @@ const evaluationItems = [
   },
 ];
 
-const evaluationLoop = [
-  '规划运行时把每次工具调用、节点流转和结果快照都写入 trace，方便回放。',
-  '评测时按场景加载权重，分别算出四个维度的分数和失败原因。',
-  '失败样本会写入 `failures.jsonl`，后续再按类别聚合，更新规则和提示词。',
-  '如果某类问题频繁复发，就回写到规则库和提示词模板，形成轻量自进化闭环。',
-];
-
 const tradeoffItems = [
   {
     title: '为什么不是更多 Agent',
