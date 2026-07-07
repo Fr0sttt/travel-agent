@@ -72,7 +72,7 @@ travel-agent/backend/.env
 
 ```env
 # Kimi OpenAI 兼容接口
-OPENAI_API_KEY=sk-kimi-OqHrPazfsZkCSiNizzVHkNwfjHUnUVf5SJnFojHFvivlU3LXfgOxFfhcThMNljhB
+OPENAI_API_KEY=
 OPENAI_BASE_URL=https://api.kimi.com/coding/
 OPENAI_MODEL=kimi-k2-0711-preview
 OPENAI_TIMEOUT=120
