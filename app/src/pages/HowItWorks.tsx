@@ -1,5 +1,18 @@
 import { Link } from 'react-router';
-import { ArrowRight, FileText, Layers3, Workflow, Brain, ShieldCheck, Puzzle, Search, Route, CloudSun, MapPinned, MessageSquareText } from 'lucide-react';
+import {
+  ArrowRight,
+  Brain,
+  CloudSun,
+  FileText,
+  Layers3,
+  MapPinned,
+  MessageSquareText,
+  Puzzle,
+  Route,
+  Search,
+  ShieldCheck,
+  Workflow,
+} from 'lucide-react';
 
 const toc = [
   { id: 'overview', label: '1. 项目定位' },
@@ -9,18 +22,19 @@ const toc = [
   { id: 'context', label: '5. 上下文工程' },
   { id: 'memory', label: '6. 记忆与会话' },
   { id: 'tools', label: '7. MCP 与外部工具' },
-  { id: 'safety', label: '8. 安全与评测' },
-  { id: 'summary', label: '9. 面试时怎么讲' },
+  { id: 'safety', label: '8. 安全设计' },
+  { id: 'evaluation', label: '9. 评测设计' },
+  { id: 'tradeoff', label: '10. 设计取舍与扩展点' },
 ];
 
 const architectureItems = [
   {
     title: '前端展示层',
-    desc: '负责承接用户输入、展示规划结果、查看地图/时间线/记忆/工具调用日志，并把后端流式结果同步出来。',
+    desc: '负责承接用户输入、展示规划结果、查看地图 / 时间线 / 记忆 / 工具调用日志，并把后端流式结果同步出来。',
   },
   {
     title: '后端编排层',
-    desc: 'FastAPI 作为入口，把用户意图、会话状态、工具结果和安全检查串成一条可追踪的执行链路。',
+    desc: 'FastAPI 作为统一入口，把用户意图、会话状态、工具结果和安全检查串成一条可追踪的执行链路。',
   },
   {
     title: 'Agent 调度层',
@@ -85,10 +99,36 @@ const memoryItems = [
 ];
 
 const safetyItems = [
-  '输入侧做约束识别，发现缺失条件时先追问，不直接硬生成。',
-  '工具侧做白名单和结果校验，避免异常数据污染后续流程。',
-  '输出侧做格式收口，保证前端拿到的是可展示、可继续追问的内容。',
-  '评测侧保留日志和失败样本，方便后面持续迭代提示词和流程。',
+  '输入侧先识别缺失约束，例如目的地、天数、预算不完整时先追问，不直接硬生成。',
+  '工具侧做白名单、参数校验和结果校验，避免异常数据污染后续链路。',
+  '输出侧做格式收口和风险提示，保证前端拿到的是可展示、可继续追问的内容。',
+  '敏感能力前置拦截，避免模型绕开业务规则直接生成不合规内容。',
+];
+
+const evaluationItems = [
+  '保留每次规划的工具调用、节点流转和结果快照，方便回放和定位问题。',
+  '针对“地点搜索、路线规划、天气整理、预算估算”这些关键能力做样本检查，看输出是否稳定。',
+  '把失败案例单独沉淀下来，后续可以针对提示词、技能拆分和上下文压缩规则做回归验证。',
+  '评测结果不只看“能不能出方案”，也看“是否遵守约束、是否可读、是否能持续追问”。',
+];
+
+const tradeoffItems = [
+  {
+    title: '为什么不是更多 Agent',
+    desc: 'Agent 数量一多，调度复杂度会快速上升。当前方案把复杂度压在 2 个核心 Agent 上，其他能力都沉到底层 Skill。',
+  },
+  {
+    title: '为什么要做上下文压缩',
+    desc: '原始工具返回非常长，如果直接进模型，很容易把窗口撑爆。压缩后既保留关键信息，也方便复用和排障。',
+  },
+  {
+    title: '为什么要保留会话历史',
+    desc: '用户常常会继续追问、改预算、换节奏。没有会话历史，系统就只能“单轮问答”，很难形成真实可用的产品体验。',
+  },
+  {
+    title: '后续可以继续扩展什么',
+    desc: '后面可以继续加强长短期记忆、检索排序、评测闭环和多城市行程编排，但前提是先把当前这条主链路跑稳。',
+  },
 ];
 
 export default function HowItWorks() {
@@ -96,15 +136,21 @@ export default function HowItWorks() {
     <div className="min-h-[calc(100dvh-64px)] bg-[#F7FAFF] text-[#0A2463]">
       <div className="max-w-[1280px] mx-auto px-6 py-10 lg:py-14">
         <div className="max-w-4xl mb-10">
-          <div className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium mb-4" style={{ background: 'rgba(33,158,188,0.12)', color: '#1A659E' }}>
+          <div
+            className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium mb-4"
+            style={{ background: 'rgba(33,158,188,0.12)', color: '#1A659E' }}
+          >
             <FileText className="w-3.5 h-3.5" />
             项目技术文档
           </div>
           <h1 className="text-4xl font-bold tracking-tight mb-4" style={{ fontFamily: "'Outfit Variable', Outfit, sans-serif" }}>
             WanderMind 多 Agent 旅行代理全栈实现
           </h1>
-          <p className="text-base leading-8 max-w-3xl" style={{ color: 'rgba(10,36,99,0.78)', fontFamily: "'Inter Variable', Inter, sans-serif" }}>
-            这一页按技术文档的方式来写，但控制在面试能快速讲清楚的粒度。重点不是逐行实现，而是让读者理解系统是怎么分层、怎么流转、怎么落地的。
+          <p
+            className="text-base leading-8 max-w-3xl"
+            style={{ color: 'rgba(10,36,99,0.78)', fontFamily: "'Inter Variable', Inter, sans-serif" }}
+          >
+            这一页按技术文档的方式组织，目标是让读者快速理解系统是怎么分层、怎么流转、怎么落地的。内容不展开到逐行实现，但会把设计思路和关键实现讲清楚。
           </p>
         </div>
 
@@ -135,7 +181,7 @@ export default function HowItWorks() {
                   WanderMind 是一个面向旅行规划场景的 Agent 化应用。用户输入目的地、天数、预算、偏好之后，系统会自动拆解需求、调用外部工具、组织行程，并把结果流式返回前端。
                 </p>
                 <p>
-                  这个项目的核心目标不是“把行程写出来”这么简单，而是把 Agent、上下文工程、记忆、工具调用、安全检查和评测串成一个完整闭环，让系统既能做事，也能解释自己为什么这么做。
+                  这个项目的目标不是简单生成一份游记式文案，而是把 Agent 调度、上下文工程、记忆、工具调用、安全检查和评测串成一个完整闭环，让系统既能做事，也能解释自己为什么这么做。
                 </p>
               </div>
             </section>
@@ -159,7 +205,10 @@ export default function HowItWorks() {
               <div className="space-y-4">
                 {flowSteps.map((item, index) => (
                   <div key={item} className="flex gap-3">
-                    <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold text-white flex-shrink-0" style={{ background: '#1A659E' }}>
+                    <div
+                      className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold text-white flex-shrink-0"
+                      style={{ background: '#1A659E' }}
+                    >
                       {index + 1}
                     </div>
                     <p className="text-sm leading-7" style={{ color: 'rgba(10,36,99,0.82)' }}>
@@ -177,7 +226,7 @@ export default function HowItWorks() {
               </div>
               <div className="space-y-4 text-sm leading-7" style={{ color: 'rgba(10,36,99,0.82)' }}>
                 <p>
-                  这里采用的是“2 Agent + 多 Skill”的方式。Planning Agent 负责调度和推进，Review Agent 负责校验和收口，具体的搜索、路线、天气、地图等能力沉到 Skill 里。
+                  这里采用“2 Agent + 多 Skill”的方式。Planning Agent 负责调度和推进，Review Agent 负责校验和收口，具体的搜索、路线、天气、地图等能力沉到 Skill 里。
                 </p>
                 <p>
                   这样设计的好处是：Agent 数量不会膨胀得太快，流程更稳定；能力扩展时主要加 Skill，不需要把每一步都变成一个新的 Agent；同时也更利于排查问题和做日志追踪。
@@ -215,7 +264,7 @@ export default function HowItWorks() {
                 ))}
               </div>
               <p className="text-sm leading-7 mt-4" style={{ color: 'rgba(10,36,99,0.78)' }}>
-                这部分的重点是“不要把所有原始数据都塞给模型”。原始工具结果会保留在外部存储里，模型真正看到的是压缩后的结构化摘要和本轮需要的最小信息。
+                这部分的重点是不要把所有原始数据都塞给模型。原始工具结果会保留在外部存储里，模型真正看到的是压缩后的结构化摘要和本轮需要的最小信息。
               </p>
             </section>
 
@@ -235,7 +284,7 @@ export default function HowItWorks() {
                 ))}
               </div>
               <p className="text-sm leading-7 mt-4" style={{ color: 'rgba(10,36,99,0.78)' }}>
-                这个设计的目的不是“无限记忆”，而是让系统在当前会话里记得住、跨会话里记得准。对面试来说，重点是讲清楚短期和长期分别解决什么问题。
+                这个设计的目的不是“无限记忆”，而是让系统在当前会话里记得住、跨会话里记得准。对产品来说，这样才可以支持追问、修改预算和连续优化。
               </p>
             </section>
 
@@ -257,7 +306,7 @@ export default function HowItWorks() {
             <section id="safety" className="rounded-2xl border border-[#D7E7F3] bg-white p-6 shadow-[0_12px_40px_rgba(10,36,99,0.05)]">
               <div className="flex items-center gap-2 mb-4">
                 <ShieldCheck className="w-4 h-4 text-[#06D6A0]" />
-                <h2 className="text-2xl font-semibold">8. 安全与评测</h2>
+                <h2 className="text-2xl font-semibold">8. 安全设计</h2>
               </div>
               <div className="space-y-3">
                 {safetyItems.map((item) => (
@@ -267,34 +316,61 @@ export default function HowItWorks() {
                   </div>
                 ))}
               </div>
+              <p className="text-sm leading-7 mt-4" style={{ color: 'rgba(10,36,99,0.78)' }}>
+                这一层的核心是前置拦截和降级兜底。与其让模型带着问题一路跑到最终输出，不如在关键节点上先把问题挡住，减少后续返工。
+              </p>
             </section>
 
-            <section id="summary" className="rounded-2xl border border-[#D7E7F3] bg-white p-6 shadow-[0_12px_40px_rgba(10,36,99,0.05)]">
+            <section id="evaluation" className="rounded-2xl border border-[#D7E7F3] bg-white p-6 shadow-[0_12px_40px_rgba(10,36,99,0.05)]">
               <div className="flex items-center gap-2 mb-4">
                 <MessageSquareText className="w-4 h-4 text-[#1A659E]" />
-                <h2 className="text-2xl font-semibold">9. 面试时怎么讲</h2>
+                <h2 className="text-2xl font-semibold">9. 评测设计</h2>
               </div>
-              <div className="space-y-3 text-sm leading-7" style={{ color: 'rgba(10,36,99,0.82)' }}>
-                <p>
-                  可以把这个项目讲成一个旅行规划 Agent 平台：用户输入需求后，系统先做上下文整理，再由 Agent 调度工具、生成方案、检查输出，最后把结果稳定地交给前端展示。
-                </p>
-                <p>
-                  进一步展开时，重点讲三件事就够了：第一，为什么不是把所有步骤都做成多个 Agent；第二，为什么要做上下文压缩和记忆分层；第三，为什么要把外部工具、日志和安全检查统一到一条可追踪链路里。
-                </p>
+              <div className="space-y-3">
+                {evaluationItems.map((item) => (
+                  <div key={item} className="flex gap-3 text-sm leading-7" style={{ color: 'rgba(10,36,99,0.82)' }}>
+                    <span className="text-[#1A659E] font-semibold">•</span>
+                    <span>{item}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="text-sm leading-7 mt-4" style={{ color: 'rgba(10,36,99,0.78)' }}>
+                评测不只是看“能不能生成结果”，还要看“是否遵守约束、是否可读、是否能继续追问、是否在异常输入下仍然稳定”。
+              </p>
+            </section>
+
+            <section id="tradeoff" className="rounded-2xl border border-[#D7E7F3] bg-white p-6 shadow-[0_12px_40px_rgba(10,36,99,0.05)]">
+              <div className="flex items-center gap-2 mb-4">
+                <ArrowRight className="w-4 h-4 text-[#1A659E]" />
+                <h2 className="text-2xl font-semibold">10. 设计取舍与扩展点</h2>
+              </div>
+              <div className="grid md:grid-cols-2 gap-4">
+                {tradeoffItems.map((item) => (
+                  <div key={item.title} className="rounded-xl border border-[#E6EEF6] p-4">
+                    <h3 className="text-base font-semibold mb-2">{item.title}</h3>
+                    <p className="text-sm leading-7" style={{ color: 'rgba(10,36,99,0.78)' }}>
+                      {item.desc}
+                    </p>
+                  </div>
+                ))}
               </div>
               <div className="mt-5 rounded-xl p-4 text-sm leading-7" style={{ background: 'rgba(33,158,188,0.06)', border: '1px dashed rgba(33,158,188,0.28)' }}>
-                这个页面本身就是给面试官看的技术文档摘要版，后续如果你想继续加深某一块，可以直接把该章节往下展开，不需要改整个结构。
+                这页后面如果要继续扩展，可以优先补“更细的记忆策略”“更完整的评测样本”和“多城市行程编排”三块，但前提还是先把当前主链路稳定住。
               </div>
             </section>
 
             <div className="flex items-center justify-between rounded-2xl border border-[#D7E7F3] bg-white px-6 py-4 shadow-[0_12px_40px_rgba(10,36,99,0.05)]">
               <div>
-                <p className="text-sm font-medium">想继续看应用层</p>
+                <p className="text-sm font-medium">返回应用</p>
                 <p className="text-xs mt-1" style={{ color: 'rgba(10,36,99,0.6)' }}>
-                  技术文档看完以后，可以回到实际产品页面。
+                  文档页看完以后，可以回到实际产品页面。
                 </p>
               </div>
-              <Link to="/app" className="inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold text-white" style={{ background: '#E29578' }}>
+              <Link
+                to="/app"
+                className="inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold text-white"
+                style={{ background: '#E29578' }}
+              >
                 回到应用
                 <ArrowRight className="w-4 h-4" />
               </Link>
