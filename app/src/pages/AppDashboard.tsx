@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Map, Clock, Calendar, BarChart3, Terminal, Brain, Shield, ChevronUp, ChevronDown, Activity, Sparkles } from 'lucide-react';
+import { Map, Clock, Calendar, BarChart3, Terminal, Brain, Shield, ChevronUp, ChevronDown, Activity, Sparkles, FileText } from 'lucide-react';
 import { useTravel } from '@/contexts/TravelContext';
 import ChatPanel from './app/ChatPanel';
 import MapPanel from './app/MapPanel';
@@ -10,9 +10,10 @@ import MetricsPanel from './app/MetricsPanel';
 import ToolCallsPanel from './app/ToolCallsPanel';
 import MemoryPanel from './app/MemoryPanel';
 import SafetyPanel from './app/SafetyPanel';
+import ProjectTechDesignPanel from './app/ProjectTechDesignPanel';
 
 type CenterTab = 'map' | 'timeline' | 'calendar';
-type RightTab = 'metrics' | 'tools' | 'memory' | 'safety';
+type RightTab = 'metrics' | 'tools' | 'memory' | 'tech' | 'safety';
 type BottomTab = 'log' | 'stream';
 
 const centerTabs: { id: CenterTab; label: string; icon: React.ElementType }[] = [
@@ -25,6 +26,7 @@ const rightTabs: { id: RightTab; label: string; icon: React.ElementType }[] = [
   { id: 'metrics', label: '指标', icon: BarChart3 },
   { id: 'tools', label: '工具', icon: Terminal },
   { id: 'memory', label: '记忆', icon: Brain },
+  { id: 'tech', label: '方案', icon: FileText },
   { id: 'safety', label: '安全', icon: Shield },
 ];
 
@@ -38,20 +40,31 @@ export default function AppDashboard() {
 
   const renderCenterPanel = () => {
     switch (centerTab) {
-      case 'map': return <MapPanel />;
-      case 'timeline': return <TimelinePanel />;
-      case 'calendar': return <CalendarPanel />;
-      default: return <MapPanel />;
+      case 'map':
+        return <MapPanel />;
+      case 'timeline':
+        return <TimelinePanel />;
+      case 'calendar':
+        return <CalendarPanel />;
+      default:
+        return <MapPanel />;
     }
   };
 
   const renderRightPanel = () => {
     switch (rightTab) {
-      case 'metrics': return <MetricsPanel />;
-      case 'tools': return <ToolCallsPanel />;
-      case 'memory': return <MemoryPanel />;
-      case 'safety': return <SafetyPanel />;
-      default: return <MetricsPanel />;
+      case 'metrics':
+        return <MetricsPanel />;
+      case 'tools':
+        return <ToolCallsPanel />;
+      case 'memory':
+        return <MemoryPanel />;
+      case 'tech':
+        return <ProjectTechDesignPanel />;
+      case 'safety':
+        return <SafetyPanel />;
+      default:
+        return <MetricsPanel />;
     }
   };
 
@@ -61,8 +74,9 @@ export default function AppDashboard() {
     CALC: '#FF9F1C',
     SAFETY: '#E29578',
   };
+
   const categoryLabels: Record<string, string> = {
-    DB: '数据库',
+    DB: '数据',
     API: '接口',
     CALC: '计算',
     SAFETY: '安全',
@@ -70,9 +84,9 @@ export default function AppDashboard() {
 
   return (
     <div className="flex flex-col w-full" style={{ height: 'calc(100dvh - 64px)', background: '#0A2463' }}>
-      {/* Main 3-Panel Layout */}
+      {/* 主体三栏布局 */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        {/* Left Panel — Chat (340px) */}
+        {/* 左侧聊天区 */}
         <div
           className="flex-shrink-0 border-r overflow-hidden"
           style={{
@@ -84,9 +98,8 @@ export default function AppDashboard() {
           <ChatPanel />
         </div>
 
-        {/* Center Panel — Map/Timeline/Calendar (flex-1) */}
+        {/* 中间内容区 */}
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-          {/* View Toggle Bar */}
           <div
             className="flex-shrink-0 h-12 flex items-center justify-end px-4 gap-2 border-b"
             style={{ borderColor: 'rgba(255,255,255,0.06)' }}
@@ -112,7 +125,6 @@ export default function AppDashboard() {
             })}
           </div>
 
-          {/* Center Content */}
           <div className="flex-1 min-h-0 overflow-hidden">
             <AnimatePresence mode="wait">
               <motion.div
@@ -129,7 +141,7 @@ export default function AppDashboard() {
           </div>
         </div>
 
-        {/* Right Panel — Evaluation (360px) */}
+        {/* 右侧功能区 */}
         <div
           className="flex-shrink-0 border-l overflow-hidden flex flex-col"
           style={{
@@ -138,7 +150,6 @@ export default function AppDashboard() {
             borderColor: 'rgba(255,255,255,0.06)',
           }}
         >
-          {/* Right Panel Tabs */}
           <div
             className="flex-shrink-0 h-11 flex items-center border-b"
             style={{ borderColor: 'rgba(255,255,255,0.06)' }}
@@ -171,7 +182,6 @@ export default function AppDashboard() {
             })}
           </div>
 
-          {/* Right Panel Content */}
           <div className="flex-1 min-h-0 overflow-hidden">
             <AnimatePresence mode="wait">
               <motion.div
@@ -189,7 +199,7 @@ export default function AppDashboard() {
         </div>
       </div>
 
-      {/* Bottom Panel (Collapsible) */}
+      {/* 底部折叠区 */}
       <div
         className="border-t transition-all duration-300 overflow-hidden"
         style={{
@@ -198,7 +208,6 @@ export default function AppDashboard() {
           borderColor: 'rgba(255,255,255,0.06)',
         }}
       >
-        {/* Bottom Panel Toggle Bar */}
         <div className="h-9 flex items-center justify-between px-4">
           <div className="flex items-center gap-2">
             {bottomOpen && (
@@ -230,7 +239,7 @@ export default function AppDashboard() {
           </div>
           <button
             onClick={() => setBottomOpen(!bottomOpen)}
-            className="flex items-center gap-1 text-[10px transition-colors hover:text-[#8ECAE6]"
+            className="flex items-center gap-1 text-[10px] transition-colors hover:text-[#8ECAE6]"
             style={{ color: 'rgba(255,255,255,0.4)' }}
           >
             {bottomOpen ? (
@@ -247,7 +256,6 @@ export default function AppDashboard() {
           </button>
         </div>
 
-        {/* Bottom Panel Content */}
         {bottomOpen && (
           <div className="h-[200px] overflow-hidden">
             {bottomTab === 'log' ? (
@@ -291,7 +299,6 @@ export default function AppDashboard() {
             ) : (
               <div className="h-full flex items-center justify-center px-4 pb-2">
                 <div className="flex items-center gap-8">
-                  {/* Memory Stream Visualization */}
                   <div className="flex flex-col items-center gap-2">
                     <div className="w-32 h-10 rounded-lg flex items-center justify-center text-xs text-white" style={{ background: '#1A659E' }}>
                       查询
@@ -304,7 +311,7 @@ export default function AppDashboard() {
                       style={{ background: '#2EC4B6' }}
                     >
                       <Sparkles className="w-3 h-3 mr-1.5" />
-                      检索
+                      压缩
                     </motion.div>
                     <div className="w-0.5 h-8" style={{ background: 'linear-gradient(180deg, #2EC4B6, #06D6A0)' }} />
                     <div className="w-32 h-10 rounded-lg flex items-center justify-center text-xs text-white" style={{ background: '#06D6A0' }}>
@@ -312,15 +319,14 @@ export default function AppDashboard() {
                     </div>
                   </div>
 
-                  {/* 检索到的记忆 */}
                   <div className="space-y-2">
                     <p className="text-[10px] uppercase tracking-wider mb-2" style={{ color: 'rgba(255,255,255,0.4)', fontFamily: "'JetBrains Mono Variable', monospace" }}>
-                      检索到的记忆
+                      最近沉淀
                     </p>
                     {[
-                      { label: '精品酒店偏好', score: 92 },
+                      { label: '酒店偏好', score: 92 },
                       { label: '早晨摄影', score: 88 },
-                      { label: '素食饮食', score: 72 },
+                      { label: '素食餐饮', score: 72 },
                     ].map((item, i) => (
                       <motion.div
                         key={item.label}
