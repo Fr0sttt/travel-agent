@@ -6832,7 +6832,7 @@ AMADEUS_API_SECRET=your-amadeus-api-secret
 
 # === Langfuse ===
 LANGFUSE_PUBLIC_KEY=pk-your-public-key
-LANGFUSE_SECRET_KEY=sk-your-secret-key
+LANGFUSE_SECRET_KEY=
 LANGFUSE_HOST=https://cloud.langfuse.com
 
 # === Database ===
