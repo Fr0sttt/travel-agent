@@ -367,6 +367,8 @@ export function TravelProvider({ children }: { children: React.ReactNode }) {
       } catch (err) {
         if ((err as Error).name === 'AbortError') return;
         if (requestIdRef.current !== requestId) return;
+        // 隧道层可能在最终 SSE 事件之后报 chunked 结束异常，此时不要覆盖已展示的业务结果。
+        if (receivedTerminalEvent) return;
         const message = err instanceof Error ? err.message : String(err);
         const interruptedStream = /ERR_INCOMPLETE_CHUNKED_ENCODING|network error|Failed to fetch/i.test(message);
         const recoveredSessionId = lastKnownSessionIdRef.current ?? sessionId;
