@@ -374,7 +374,7 @@ export function buildDashboardData(state: SessionState): DashboardData {
   ];
 
   // Tool call logs
-  const toolCallLogs: ToolCallLog[] = toolCalls.map((tc, idx) => {
+  const rawToolCallLogs: ToolCallLog[] = toolCalls.map((tc, idx) => {
     const call = tc as Record<string, unknown>;
     const ts = String(call.timestamp || new Date().toISOString());
     return {
@@ -393,6 +393,40 @@ export function buildDashboardData(state: SessionState): DashboardData {
         : JSON.stringify(call.output || {}),
       duration: Number(call.latency_ms || 0),
     };
+  });
+
+  // 路线规划会为每一段路调用一次 estimate_route，逐条展示会把面板撑满。
+  // 将这些底层调用合并成一个可展开的“路线规划”工具，保留汇总信息，
+  // 其他工具仍按原样显示。
+  const routeLogs = rawToolCallLogs.filter((log) =>
+    /(^|_)estimate_route(?:_geometry)?$/.test(log.function),
+  );
+  const firstRouteIndex = rawToolCallLogs.findIndex((log) =>
+    /(^|_)estimate_route(?:_geometry)?$/.test(log.function),
+  );
+  const routeSummary: ToolCallLog | null = routeLogs.length > 0
+    ? {
+        id: 'log-route-planning',
+        timestamp: routeLogs[0].timestamp,
+        category: 'CALC',
+        function: 'route_planner',
+        params: JSON.stringify({
+          calls: routeLogs.length,
+          successful: routeLogs.filter((log) => !log.result.startsWith('Error')).length,
+          failed: routeLogs.filter((log) => log.result.startsWith('Error')).length,
+        }),
+        result: `路线规划完成：${routeLogs.filter((log) => !log.result.startsWith('Error')).length}/${routeLogs.length} 段调用成功`,
+        duration: routeLogs.reduce((sum, log) => sum + log.duration, 0),
+      }
+    : null;
+
+  const toolCallLogs: ToolCallLog[] = [];
+  rawToolCallLogs.forEach((log, index) => {
+    if (index === firstRouteIndex && routeSummary) {
+      toolCallLogs.push(routeSummary);
+    }
+    if (/(^|_)estimate_route(?:_geometry)?$/.test(log.function)) return;
+    toolCallLogs.push(log);
   });
 
   // 真实道路路径：把每段 route 里高德返回的 polyline 坐标依次拼接。
