@@ -40,6 +40,7 @@ jobs:
           VITE_API_BASE: ${{ vars.VITE_API_BASE }}
           VITE_AMAP_KEY: ${{ vars.VITE_AMAP_KEY }}
           VITE_AMAP_SECURITY_JS_CODE: ${{ vars.VITE_AMAP_SECURITY_JS_CODE }}
+          VITE_HOW_IT_WORKS_EDIT_PASSWORD_HASH: ${{ vars.VITE_HOW_IT_WORKS_EDIT_PASSWORD_HASH }}
         run: npm run build
 
       - name: Upload artifact
