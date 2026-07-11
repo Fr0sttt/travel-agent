@@ -181,6 +181,25 @@ def _looks_like_poi_name(name: str) -> bool:
     return any(name.endswith(suffix) for suffix in poi_suffixes)
 
 
+def _infer_poi_category(name: str) -> str:
+    """Infer a coarse POI category from a guide candidate name.
+
+    Guide platforms often return venue names without a structured type. Keep
+    this intentionally conservative; Amap validation still decides whether
+    the name is a real POI.
+    """
+    text = _clean_text(name)
+    if re.search(r"(餐厅|饭店|酒家|火锅|烤肉|烧烤|寿司|日料|面馆|小吃|咖啡|茶馆|甜品|食府|菜馆|私房菜|臭鳜鱼)", text):
+        return "foods"
+    if re.search(r"(博物馆|纪念馆|美术馆|艺术馆|图书馆)", text):
+        return "museums"
+    if re.search(r"(古镇|古街|老街|故居|遗址|古塔|寺|庙)", text):
+        return "historic"
+    if re.search(r"(公园|湿地|湖|湾|岛|山|谷|瀑布|自然保护区|森林)", text):
+        return "natural"
+    return "interesting_places"
+
+
 def extract_poi_candidates_from_notes(
     notes: list[Any],
     city: str,
@@ -414,7 +433,9 @@ class JustOneGuideSearch:
 
         # 这里刻意只搜“城市 + 景点”这类强指向词，避免把预算、天数、
         # 玩法、心情词一起混进来，后面的抽取结果会干净很多。
-        keyword_parts = [city, "景点", "热门景点"]
+        # Broad city-level guide query keeps the source mix diverse. A future
+        # user-provided query can be appended here without changing fallback.
+        keyword_parts = [city, "旅游攻略"]
         keyword = " ".join(part for part in keyword_parts if part)
 
         cached = self._read_cache(keyword)
@@ -590,7 +611,7 @@ class JustOneGuideSearch:
             return {"enabled": False, "notes": [], "source": "JustOneAPI disabled"}
 
         base_url = settings.justoneapi_base_url.rstrip("/")
-        keyword = f"{city} 旅游 景点"
+        keyword = f"{city} 旅游攻略"
         now = datetime.now()
         start_day = (now - timedelta(days=180)).strftime("%Y-%m-%d")
         end_day = now.strftime("%Y-%m-%d")
@@ -679,6 +700,7 @@ class JustOneGuideSearch:
         center_lat: float | None = None,
         center_lon: float | None = None,
         limit: int | None = None,
+        interests: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """候选地点先经过地理编码校验，再按城市中心距离过滤，避免把攻略文本里的泛词直接放进行程。"""
         from agent.tools import geocode_location, search_places
@@ -752,10 +774,40 @@ class JustOneGuideSearch:
             if matched_lat is not None and matched_lon is not None:
                 lat, lon = matched_lat, matched_lon
 
+            category = _infer_poi_category(name)
+            interest_aliases = {
+                "自然": "natural",
+                "美食": "foods",
+                "公园": "parks",
+                "历史": "historic",
+                "文化": "cultural",
+                "博物馆": "museums",
+                "宗教": "religion",
+                "建筑": "architecture",
+            }
+            requested_categories = {
+                interest_aliases.get(str(item), str(item))
+                for item in (interests or [])
+            }
+            if requested_categories:
+                allowed_categories = {
+                    "natural": {"natural", "parks", "interesting_places"},
+                    "foods": {"foods"},
+                    "parks": {"parks", "natural"},
+                    "historic": {"historic", "cultural"},
+                    "cultural": {"cultural", "historic", "museums"},
+                    "museums": {"museums"},
+                    "religion": {"religion", "historic"},
+                    "architecture": {"architecture", "historic"},
+                }
+                allowed = set().union(*(allowed_categories.get(item, {item}) for item in requested_categories))
+                if category not in allowed:
+                    continue
+
             guide_source = str(candidate.get("guide_source") or "JustOneAPI 攻略搜索")
             poi = {
                 "name": name,
-                "category": "guide_recommended",
+                "category": category,
                 "coordinates": {"lat": lat, "lon": lon},
                 "rating": None,
                 "description": f"{guide_source}提及 {candidate.get('guide_mentions', 1)} 次，坐标已通过地理编码校验",
@@ -820,6 +872,7 @@ async def search_guide_pois(
             center_lat=center_lat,
             center_lon=center_lon,
             limit=settings.justoneapi_max_pois_per_plan,
+            interests=interests,
         )
         return {
             "enabled": note_result.get("enabled", False),

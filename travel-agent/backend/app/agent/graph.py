@@ -624,13 +624,14 @@ async def destination_search(state: TravelState) -> TravelState:
         )
         return state
 
-    search_kinds = set()
+    search_kinds: list[str] = []
     for interest in interests:
         for kind in kind_mapping.get(interest, ["interesting_places"]):
-            search_kinds.add(kind)
+            if kind not in search_kinds:
+                search_kinds.append(kind)
 
     if not search_kinds:
-        search_kinds.add("interesting_places")
+        search_kinds.append("interesting_places")
 
     for kind in search_kinds:
         try:
@@ -667,8 +668,56 @@ async def destination_search(state: TravelState) -> TravelState:
             state["risk_alerts"].append(f"搜索 {kind} 失败: {str(e)}")
             continue
 
+    # 攻略结果先进入 all_pois，容易把同一类（尤其是餐厅）占满前几位。
+    # 按用户偏好类别轮询，确保自然/美食等类别都能进入每天的行程。
+    category_aliases = {
+        "natural": {"natural", "parks", "interesting_places"},
+        "parks": {"parks", "natural"},
+        "foods": {"foods"},
+        "historic": {"historic", "cultural"},
+        "cultural": {"cultural", "historic", "museums"},
+        "museums": {"museums"},
+        "religion": {"religion", "historic"},
+        "architecture": {"architecture", "historic"},
+    }
+
+    def _balanced_pois(items: list[dict], kinds: list[str], limit: int) -> list[dict]:
+        buckets: list[list[tuple[int, dict]]] = []
+        for kind in kinds:
+            accepted = category_aliases.get(kind, {kind})
+            buckets.append([
+                (index, poi)
+                for index, poi in enumerate(items)
+                if str(poi.get("category") or "") in accepted
+            ])
+
+        selected: list[dict] = []
+        used: set[int] = set()
+        while len(selected) < limit:
+            progressed = False
+            for bucket in buckets:
+                for index, poi in bucket:
+                    if index in used:
+                        continue
+                    used.add(index)
+                    selected.append(poi)
+                    progressed = True
+                    break
+                if len(selected) >= limit:
+                    break
+            if not progressed:
+                break
+
+        # 未分类或未命中偏好的 POI 作为最后兜底，不让搜索结果为空。
+        for index, poi in enumerate(items):
+            if len(selected) >= limit:
+                break
+            if index not in used:
+                selected.append(poi)
+        return selected
+
     # 限制 POI 数量
-    state["poi_list"] = all_pois[:20]
+    state["poi_list"] = _balanced_pois(all_pois, search_kinds, 20)
     state["current_node"] = "destination_search"
 
     # 记录工具调用
@@ -1090,6 +1139,25 @@ async def itinerary_synthesizer(state: TravelState) -> TravelState:
     def _category_label(raw: str) -> str:
         return category_label_map.get(raw, raw if raw else "热门景点")
 
+    def _source_label(poi: dict) -> str:
+        source = str(poi.get("source") or "未知来源")
+        # Keep the user-facing label short while preserving the platform.
+        if "JustOneAPI" in source:
+            if "抖音" in source and "B站" in source:
+                return "抖音/B站 + 高德地图 MCP"
+            if "抖音" in source:
+                return "抖音 + 高德地图 MCP"
+            if "B站" in source:
+                return "B站 + 高德地图 MCP"
+            if "微博" in source:
+                return "微博 + 高德地图 MCP"
+            return "小红书 + 高德地图 MCP"
+        if "高德" in source or "MCP" in source:
+            return "高德地图 MCP"
+        if "OpenTripMap" in source:
+            return "OpenTripMap"
+        return source
+
     # 构建行程 Markdown
     lines = [
         f"# {destination} {duration}天{companions_text}旅行计划",
@@ -1138,7 +1206,10 @@ async def itinerary_synthesizer(state: TravelState) -> TravelState:
             start, end = visit_slots[i]
             poi_name = poi.get("name", "景点")
             poi_names_for_summary.append(poi_name)
-            activities.append(f"- {start}-{end}: **{poi_name}** - [推荐: {_category_label(poi.get('category', ''))}]")
+            activities.append(
+                f"- {start}-{end}: **{poi_name}** - [推荐: {_category_label(poi.get('category', ''))}] "
+                f"[来源: {_source_label(poi)}]"
+            )
 
         # 按时间顺序插入用餐（不与景点时段重叠）
         if activities:
@@ -1149,7 +1220,10 @@ async def itinerary_synthesizer(state: TravelState) -> TravelState:
         for extra_poi in extra_pois:
             extra_name = extra_poi.get("name", "景点")
             poi_names_for_summary.append(extra_name)
-            activities.append(f"- 16:30-17:30: **{extra_name}** - [推荐: {_category_label(extra_poi.get('category', ''))}]")
+            activities.append(
+                f"- 16:30-17:30: **{extra_name}** - [推荐: {_category_label(extra_poi.get('category', ''))}] "
+                f"[来源: {_source_label(extra_poi)}]"
+            )
         activities.append("- 19:00-20:00: **晚餐** - [推荐当地特色餐厅]")
 
         if not day_pois:
