@@ -181,7 +181,12 @@ def _looks_like_poi_name(name: str) -> bool:
     return any(name.endswith(suffix) for suffix in poi_suffixes)
 
 
-def extract_poi_candidates_from_notes(notes: list[Any], city: str, limit: int = 12) -> list[dict[str, Any]]:
+def extract_poi_candidates_from_notes(
+    notes: list[Any],
+    city: str,
+    limit: int = 12,
+    source_label: str = "JustOneAPI 攻略搜索",
+) -> list[dict[str, Any]]:
     """从小红书搜索结果中抽取可能的地点名，先做候选，不直接当作真实 POI 使用。"""
     full_text = "\n".join(_note_text(note) for note in notes[: settings.justoneapi_max_notes_per_plan])
     if not full_text:
@@ -219,7 +224,7 @@ def extract_poi_candidates_from_notes(notes: list[Any], city: str, limit: int = 
         reverse=True,
     )
     return [
-        {"name": name, "guide_mentions": count, "guide_source": "JustOneAPI 小红书搜索"}
+        {"name": name, "guide_mentions": count, "guide_source": source_label}
         for name, count in ranked[:limit]
     ]
 
@@ -307,6 +312,11 @@ class JustOneGuideSearch:
     """JustOneAPI 小红书攻略搜索技能，负责低成本拿攻略信号并交给高德校验。"""
 
     endpoint = "/api/xiaohongshu/search-note/v4"
+    fallback_endpoints = {
+        "douyin": "/api/douyin/search-video/v4",
+        "bilibili": "/api/bilibili/search-video/v2",
+        "weibo": "/api/weibo/search-all/v2",
+    }
 
     def __init__(self) -> None:
         self.cache_dir = Path(settings.justoneapi_cache_dir)
@@ -510,6 +520,158 @@ class JustOneGuideSearch:
             "endpoint": self.endpoint,
         }
 
+    @staticmethod
+    def _fallback_records(payload: Any, source: str) -> list[dict[str, Any]]:
+        """把抖音/B站/微博的异构结果压成地点抽取器可消费的攻略文本。"""
+        records: list[dict[str, Any]] = []
+        seen: set[str] = set()
+
+        def visit(value: Any) -> None:
+            if isinstance(value, list):
+                for item in value:
+                    visit(item)
+                return
+            if not isinstance(value, dict):
+                return
+
+            aweme = value.get("aweme_info")
+            if isinstance(aweme, dict):
+                visit(aweme)
+                return
+
+            title = _clean_text(
+                value.get("title")
+                or value.get("desc")
+                or value.get("description")
+                or value.get("text")
+                or value.get("content")
+                or ""
+            )
+            description = _clean_text(
+                value.get("description")
+                or value.get("desc")
+                or value.get("text")
+                or value.get("content")
+                or value.get("tag")
+                or ""
+            )
+            url = _clean_text(
+                value.get("arcurl")
+                or value.get("url")
+                or value.get("share_url")
+                or value.get("shareUrl")
+                or ""
+            )
+            # 只把带有正文/标题的内容对象作为候选，避免把响应中的配置字典
+            # 误当成攻略；随后仍由规则/LLM 和高德 POI 校验共同过滤。
+            if title or description:
+                key = f"{title}|{url}"
+                if key not in seen:
+                    seen.add(key)
+                    records.append({
+                        "title": title[:160],
+                        "desc": description[:1600],
+                        "content": description[:1600],
+                        "url": url,
+                        "source": source,
+                    })
+
+            for nested_key in ("result", "data", "business_data", "items", "list", "cards"):
+                nested = value.get(nested_key)
+                if isinstance(nested, (dict, list)):
+                    visit(nested)
+
+        visit(payload)
+        return records
+
+    async def search_fallback_notes(self, city: str) -> dict[str, Any]:
+        """小红书失败时并行搜索抖音、B站、微博，保持同一 JustOneAPI 账号。"""
+        if not self.enabled():
+            return {"enabled": False, "notes": [], "source": "JustOneAPI disabled"}
+
+        base_url = settings.justoneapi_base_url.rstrip("/")
+        keyword = f"{city} 旅游 景点"
+        now = datetime.now()
+        start_day = (now - timedelta(days=180)).strftime("%Y-%m-%d")
+        end_day = now.strftime("%Y-%m-%d")
+        requests = {
+            "douyin": {
+                "token": settings.justoneapi_key,
+                "keyword": keyword,
+                "sortType": "_1",
+                "publishTime": "_180",
+                "page": 1,
+            },
+            "bilibili": {
+                "token": settings.justoneapi_key,
+                "keyword": keyword,
+                "order": "click",
+                "page": 1,
+            },
+            "weibo": {
+                "token": settings.justoneapi_key,
+                "q": keyword,
+                "startDay": start_day,
+                "startHour": 0,
+                "endDay": end_day,
+                "endHour": 23,
+                "hotSort": "true",
+                "page": 1,
+            },
+        }
+
+        async def request_one(source: str) -> tuple[str, dict[str, Any], list[dict[str, Any]]]:
+            endpoint = self.fallback_endpoints[source]
+            try:
+                async with httpx.AsyncClient(timeout=settings.justoneapi_timeout) as client:
+                    response = await client.get(f"{base_url}{endpoint}", params=requests[source])
+                    payload = response.json()
+                code = str(payload.get("code", "0")) if isinstance(payload, dict) else "0"
+                records = self._fallback_records(payload, f"JustOneAPI {source} 攻略搜索") if code in ("0", "200") else []
+                meta = {
+                    "endpoint": endpoint,
+                    "http_status": response.status_code,
+                    "api_code": code,
+                    "request_id": str(payload.get("requestId") or "") if isinstance(payload, dict) else "",
+                    "error": None if records else str(payload.get("message") or "返回空数据"),
+                }
+                return source, meta, records
+            except Exception as exc:
+                return source, {
+                    "endpoint": endpoint,
+                    "http_status": None,
+                    "api_code": None,
+                    "request_id": "",
+                    "error": str(exc),
+                }, []
+
+        results = await asyncio.gather(*(request_one(source) for source in requests))
+        notes: list[dict[str, Any]] = []
+        metadata: list[dict[str, Any]] = []
+        for source, meta, records in results:
+            metadata.append({"source": source, **meta, "record_count": len(records)})
+            notes.extend(records)
+
+        # 以标题/URL 去重，避免同一视频在多个响应层级重复出现。
+        deduped: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for note in notes:
+            key = f"{note.get('title', '')}|{note.get('url', '')}"
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(note)
+
+        return {
+            "enabled": True,
+            "cached": False,
+            "keyword": keyword,
+            "notes": deduped[: settings.justoneapi_max_notes_per_plan * 3],
+            "source": "JustOneAPI 抖音+B站+微博降级搜索",
+            "fallback_platforms": metadata,
+            "attempted_endpoints": [item["endpoint"] for item in metadata],
+        }
+
     async def validate_with_amap(
         self,
         candidates: list[dict[str, Any]],
@@ -590,13 +752,14 @@ class JustOneGuideSearch:
             if matched_lat is not None and matched_lon is not None:
                 lat, lon = matched_lat, matched_lon
 
+            guide_source = str(candidate.get("guide_source") or "JustOneAPI 攻略搜索")
             poi = {
                 "name": name,
                 "category": "guide_recommended",
                 "coordinates": {"lat": lat, "lon": lon},
                 "rating": None,
-                "description": f"小红书攻略提及 {candidate.get('guide_mentions', 1)} 次，坐标已通过地理编码校验",
-                "source": "JustOneAPI 小红书搜索 + 地理编码校验",
+                "description": f"{guide_source}提及 {candidate.get('guide_mentions', 1)} 次，坐标已通过地理编码校验",
+                "source": f"{guide_source} + 高德地图校验",
                 "uncertainty_flags": ["来源于攻略提名，开放时间和门票需出发前确认"],
                 "guide_mentions": candidate.get("guide_mentions", 1),
             }
@@ -617,7 +780,17 @@ async def search_guide_pois(
     skill = JustOneGuideSearch()
     try:
         note_result = await skill.search_notes(city=city, days=days, interests=interests)
-        if note_result.get("error"):
+        # V4/V2 小红书均失败，或返回空结果时，降级到同一 JustOneAPI
+        # 账号下的抖音、B站、微博搜索；这些结果只作为“候选来源”，
+        # 最终仍必须经过高德地理编码和 POI 校验。
+        if note_result.get("error") or not note_result.get("notes"):
+            fallback_result = await skill.search_fallback_notes(city)
+            if fallback_result.get("notes"):
+                note_result = fallback_result
+            elif note_result.get("error"):
+                note_result["fallback_platforms"] = fallback_result.get("fallback_platforms", [])
+
+        if note_result.get("error") and not note_result.get("notes"):
             return {
                 "enabled": note_result.get("enabled", False),
                 "cached": False,
@@ -638,6 +811,9 @@ async def search_guide_pois(
             city,
             limit=settings.justoneapi_max_pois_per_plan * 2,
         )
+        guide_source = str(note_result.get("source") or "JustOneAPI 攻略搜索")
+        for candidate in candidates:
+            candidate["guide_source"] = guide_source
         pois = await skill.validate_with_amap(
             candidates,
             city,
@@ -657,7 +833,9 @@ async def search_guide_pois(
             "request_id": note_result.get("request_id"),
             "attempts": note_result.get("attempts", 0),
             "endpoint": note_result.get("endpoint", JustOneGuideSearch.endpoint),
-            "source": "JustOneAPI 小红书搜索 + 高德地图 MCP 校验",
+            "source": guide_source + " + 高德地图 MCP 校验",
+            "fallback_platforms": note_result.get("fallback_platforms", []),
+            "attempted_endpoints": note_result.get("attempted_endpoints", []),
         }
     except httpx.HTTPStatusError as exc:
         return {
