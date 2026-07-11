@@ -472,7 +472,11 @@ def _normalize_amap_route(payload: Any, profile: str) -> dict[str, Any] | None:
     if data is None:
         return None
 
+    # 驾车/步行接口返回 route，骑行 v4 接口返回 data；同时兼容 MCP
+    # 包装结果和高德 Web 服务原始结果。
     route = data.get("route") if isinstance(data.get("route"), dict) else data
+    if isinstance(route.get("data"), dict):
+        route = route["data"]
     if route is None:
         return None
 
@@ -486,6 +490,25 @@ def _normalize_amap_route(payload: Any, profile: str) -> dict[str, Any] | None:
 
     steps: list[dict[str, Any]] = []
     polyline_points: list[list[float]] = []
+
+    def append_polyline(value: Any) -> None:
+        if not isinstance(value, str) or not value:
+            return
+        for point in value.split(";"):
+            point = point.strip()
+            if not point or "," not in point:
+                continue
+            lon_str, lat_str = point.split(",", 1)
+            point_lon = _coerce_float(lon_str)
+            point_lat = _coerce_float(lat_str)
+            if point_lon is None or point_lat is None:
+                continue
+            normalized_point = [point_lon, point_lat]
+            if not polyline_points or polyline_points[-1] != normalized_point:
+                polyline_points.append(normalized_point)
+
+    # 部分高德接口会在 path 层直接给出完整轨迹。
+    append_polyline(first_path.get("polyline") or first_path.get("path"))
     raw_steps = first_path.get("steps") if isinstance(first_path.get("steps"), list) else []
     for step in raw_steps:
         if not isinstance(step, dict):
@@ -501,17 +524,7 @@ def _normalize_amap_route(payload: Any, profile: str) -> dict[str, Any] | None:
         )
         # 高德每个 step 的 polyline 是 "lon1,lat1;lon2,lat2;..." 格式的实际道路坐标串，
         # 拼接起来才是真实路网路径，而不是 POI 点之间的直线。
-        step_polyline = step.get("polyline")
-        if isinstance(step_polyline, str) and step_polyline:
-            for point in step_polyline.split(";"):
-                point = point.strip()
-                if not point or "," not in point:
-                    continue
-                lon_str, lat_str = point.split(",", 1)
-                point_lon = _coerce_float(lon_str)
-                point_lat = _coerce_float(lat_str)
-                if point_lon is not None and point_lat is not None:
-                    polyline_points.append([point_lon, point_lat])
+        append_polyline(step.get("polyline"))
 
     return {
         "distance": round(distance, 2),
@@ -525,6 +538,40 @@ def _normalize_amap_route(payload: Any, profile: str) -> dict[str, Any] | None:
         "source": "高德地图 MCP",
         "uncertainty": "高德路线结果",
     }
+
+
+async def _request_amap_route_direct(
+    start_lat: float,
+    start_lon: float,
+    end_lat: float,
+    end_lon: float,
+    profile: str,
+) -> dict[str, Any] | None:
+    """获取 MCP 当前版本未透传的真实道路 polyline。"""
+    if not settings.amap_maps_api_key.strip():
+        return None
+
+    endpoint = {
+        "walking": "https://restapi.amap.com/v3/direction/walking",
+        "cycling": "https://restapi.amap.com/v4/direction/bicycling",
+    }.get(profile, "https://restapi.amap.com/v3/direction/driving")
+    payload = await _async_http_get(
+        endpoint,
+        params={
+            "key": settings.amap_maps_api_key,
+            "origin": f"{start_lon},{start_lat}",
+            "destination": f"{end_lon},{end_lat}",
+            "extensions": "base",
+        },
+        timeout=settings.amap_mcp_request_timeout_seconds,
+        max_retries=2,
+    )
+    result = _normalize_amap_route(payload, profile)
+    if result is None:
+        return None
+    result["source"] = "高德地图 Web服务 API"
+    result["uncertainty"] = "高德真实道路路径；MCP 当前版本未透传道路几何，已由同源接口补全"
+    return result
 
 
 def _normalize_amap_weather(payload: Any) -> dict[str, Any] | None:
@@ -690,17 +737,12 @@ async def collect_preferences(user_input: str, current_preferences: dict | None 
     if current_preferences is None:
         current_preferences = {}
 
+    # 偏好提取只使用 LLM。不能用规则把模型没有确认的内容“猜”出来，
+    # 否则后续地图搜索和评测会把猜测值当成用户真实约束。
     llm_result = await _extract_preferences_with_llm(user_input, current_preferences)
-    rule_result = _extract_preferences_from_text(user_input)
-
-    # LLM 可能只提取出部分字段，不能因为它成功返回就跳过规则兜底。
-    # 这里采用“LLM 优先、规则补缺”的策略，保证目的地/天数/预算这类硬字段尽量完整。
     result: dict[str, Any] = {}
     if isinstance(llm_result, dict):
         result.update({key: value for key, value in llm_result.items() if value not in (None, "", [])})
-    for key, value in rule_result.items():
-        if value not in (None, "", []) and not result.get(key):
-            result[key] = value
 
     # 合并到现有偏好
     merged = dict(current_preferences)
@@ -743,23 +785,43 @@ async def _extract_preferences_with_llm(
             current_preferences=json.dumps(current_preferences, ensure_ascii=False),
             user_input=user_input,
         )
-        response = await client.chat.completions.create(
-            model=settings.openai_model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.1,
-            max_tokens=500,
-            timeout=10,
-        )
+        request = {
+            "model": settings.openai_model,
+            "messages": [
+                {"role": "system", "content": "你是严格的旅行需求结构化抽取器，只输出 JSON。"},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.0,
+            "max_tokens": 600,
+            "timeout": settings.openai_timeout,
+        }
+        # 该中转站对 response_format 的兼容性不稳定，先让模型按提示词输出
+        # JSON，再在 JSON 解析失败时用同一个 LLM 请求重试结构化模式。
+        async def call_llm(**extra: Any) -> Any:
+            return await client.chat.completions.create(**request, **extra)
+
+        response = await call_llm()
         raw_text = response.choices[0].message.content or ""
-        import re
-        match = re.search(r"\{.*\}", raw_text, re.DOTALL)
-        json_text = match.group(0) if match else raw_text
-        parsed = json.loads(json_text)
-        preference = parsed.get("preference")
+        try:
+            parsed = json.loads(raw_text)
+        except json.JSONDecodeError:
+            response = await call_llm(response_format={"type": "json_object"})
+            raw_text = response.choices[0].message.content or ""
+            parsed = json.loads(raw_text)
+        # 兼容模型偶尔直接返回字段对象，而不是包在 preference 下。
+        preference = parsed.get("preference") if isinstance(parsed, dict) else None
+        if not isinstance(preference, dict) and isinstance(parsed, dict):
+            preference = parsed
         if not isinstance(preference, dict):
             return None
         return preference
-    except Exception:
+    except Exception as exc:
+        # 不能静默吞掉提取失败，否则线上只能看到“缺字段追问”，无法判断是
+        # 模型超时、JSON 解析失败，还是中转站返回了不兼容的响应。
+        print(
+            f"[PreferenceExtractor] LLM 提取失败，不使用规则补缺: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
         return None
 
 
@@ -798,6 +860,8 @@ def _extract_preferences_from_text(text: str) -> dict[str, Any]:
     dest_patterns = [
         r'(?:想)?(?:去|到|飞往|前往)([\u4e00-\u9fffA-Za-z]{2,12}?)(?:市|县|区|省)?(?=玩|旅行|旅游|度假|攻略|[,，。；;、\s]|$)',
         r'([\u4e00-\u9fffA-Za-z]{2,12})\s*(?:旅行|旅游|度假|攻略)',
+        # 兼容“大理一个人玩3天”“成都3天5000预算”这类省略“去/旅行”的表达。
+        r'([\u4e00-\u9fffA-Za-z]{2,8}?)(?=\s*(?:一个人|独自|单人|两个人|情侣|带孩子|带小孩|朋友|团队|玩|游|[0-9零一二两三四五六七八九十]+\s*(?:天|日)|预算))',
     ]
     for pattern in dest_patterns:
         match = re.search(pattern, text)
@@ -817,8 +881,11 @@ def _extract_preferences_from_text(text: str) -> dict[str, Any]:
     if budget_match:
         result["budget_cny"] = parse_budget(budget_match.group(1), budget_match.group(2))
     else:
-        # 匹配"X块钱"、"X元"
-        budget_match2 = re.search(r'([0-9][0-9,]*(?:\.\d+)?)\s*(万)?\s*(?:块钱|块|元|人民币)', text)
+        # 同时兼容“X元”和“X预算/预算X”两种紧凑写法。
+        budget_match2 = re.search(
+            r'([0-9][0-9,]*(?:\.\d+)?)\s*(万)?\s*(?:块钱|块|元|人民币|预算)',
+            text,
+        )
         if budget_match2:
             result["budget_cny"] = parse_budget(budget_match2.group(1), budget_match2.group(2))
 
@@ -890,6 +957,7 @@ async def search_places(
     radius: int = 5000,
     kinds: str = "interesting_places",
     rate: str = "3",
+    keyword: str | None = None,
 ) -> list[dict[str, Any]]:
     """
     搜索目的地附近的景点、餐厅、咖啡馆等 POI。
@@ -912,6 +980,8 @@ async def search_places(
             - architecture: 建筑
             - parks: 公园
         rate: 最低评分 1-7，默认 3（只返回评分 >=3 的景点）
+        keyword: 可选的具体地点关键词。小红书抽取出的景点名会通过该参数
+            交给高德做 POI 精确校验；为空时按 kinds 搜索一类 POI。
 
     Returns:
         list[dict]: POI 列表，每个元素包含:
@@ -932,7 +1002,7 @@ async def search_places(
         {
             "location": f"{lon},{lat}",
             "radius": str(radius),
-            "keywords": _amap_keyword_for_kinds(kinds),
+            "keywords": keyword or _amap_keyword_for_kinds(kinds),
             # weight: 综合权重排序（人气/评分优先），避免默认按距离返回无名 POI
             "sortrule": "weight",
         },
@@ -1147,6 +1217,7 @@ async def estimate_route(
     end_lat: float,
     end_lon: float,
     profile: str = "driving",
+    include_geometry: bool = True,
 ) -> dict[str, Any]:
     """
     估算两点之间的路线距离和时间。
@@ -1189,15 +1260,37 @@ async def estimate_route(
             "destination": f"{end_lon},{end_lat}",
         },
     )
-    if mcp_payload is not None:
-        mcp_result = _normalize_amap_route(mcp_payload, profile)
-        if mcp_result is not None:
-            return mcp_result
+    mcp_result = _normalize_amap_route(mcp_payload, profile) if mcp_payload is not None else None
+    if mcp_result is not None and (not include_geometry or mcp_result.get("polyline")):
+        return mcp_result
+
+    # @amap/amap-maps-mcp-server 0.0.8 的路径工具会裁掉 step.polyline。
+    # 需要展示路线时，使用同一高德 Key 调用 Web 服务补齐真实道路几何；
+    # 距离矩阵阶段则不重复请求，避免 N² 次额外调用。
+    if include_geometry or mcp_result is None:
+        try:
+            amap_direct_result = await _request_amap_route_direct(
+                start_lat,
+                start_lon,
+                end_lat,
+                end_lon,
+                profile,
+            )
+            if amap_direct_result is not None:
+                return amap_direct_result
+        except (httpx.HTTPError, ValueError, TypeError):
+            pass
+
+    if mcp_result is not None:
+        return mcp_result
 
     base_url = settings.osrm_base_url
     coords = f"{start_lon},{start_lat};{end_lon},{end_lat}"
     url = f"{base_url}/{coords}"
-    params = {"overview": "false"}
+    params = {
+        "overview": "full" if include_geometry else "false",
+        "geometries": "geojson",
+    }
 
     try:
         data = await _async_http_get(
@@ -1238,12 +1331,25 @@ async def estimate_route(
     distance = route["distance"]
     duration = route["duration"]
 
+    geometry = route.get("geometry") if isinstance(route.get("geometry"), dict) else {}
+    coordinates = geometry.get("coordinates") if isinstance(geometry.get("coordinates"), list) else []
+    polyline = []
+    if include_geometry:
+        for point in coordinates:
+            if not isinstance(point, list) or len(point) < 2:
+                continue
+            lon = _coerce_float(point[0])
+            lat = _coerce_float(point[1])
+            if lon is not None and lat is not None:
+                polyline.append([lon, lat])
+
     return {
         "distance": round(distance, 2),
         "duration": round(duration, 2),
         "distance_km": round(distance / 1000, 2),
         "duration_minutes": round(duration / 60, 1),
         "profile": profile,
+        "polyline": polyline,
         "source": "OSRM",
         "uncertainty": "估算基于道路网络，不包含实时交通状况，实际时间可能更长",
     }

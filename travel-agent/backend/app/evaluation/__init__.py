@@ -37,22 +37,22 @@ Usage:
     md_str = runner.export_report(report, format="md")
 """
 
-from backend.app.evaluation.base import (
-    BaseEvaluator,
-    EvalResult,
-    EvalReport,
-    DimensionWeight,
-    ToolCallRecord,
-    TrialSegment,
-)
-from backend.app.evaluation.end_to_end import RACEEndToEndEvaluator
-from backend.app.evaluation.reasoning_eval import DoVerReasoningEvaluator
-from backend.app.evaluation.tool_eval import AgentWorldToolEvaluator
-from backend.app.evaluation.rag_eval import FACTRAGEvaluator
-from backend.app.evaluation.comprehensive_metrics import (
-    ComprehensiveMetricsEvaluator,
-)
-from backend.app.evaluation.evaluation_runner import EvaluationRunner
+try:
+    from backend.app.evaluation.base import BaseEvaluator, EvalResult, EvalReport, DimensionWeight, ToolCallRecord, TrialSegment
+    from backend.app.evaluation.end_to_end import RACEEndToEndEvaluator
+    from backend.app.evaluation.reasoning_eval import DoVerReasoningEvaluator
+    from backend.app.evaluation.tool_eval import AgentWorldToolEvaluator
+    from backend.app.evaluation.rag_eval import FACTRAGEvaluator
+    from backend.app.evaluation.comprehensive_metrics import ComprehensiveMetricsEvaluator
+    from backend.app.evaluation.evaluation_runner import EvaluationRunner
+except ModuleNotFoundError:
+    from evaluation.base import BaseEvaluator, EvalResult, EvalReport, DimensionWeight, ToolCallRecord, TrialSegment
+    from evaluation.end_to_end import RACEEndToEndEvaluator
+    from evaluation.reasoning_eval import DoVerReasoningEvaluator
+    from evaluation.tool_eval import AgentWorldToolEvaluator
+    from evaluation.rag_eval import FACTRAGEvaluator
+    from evaluation.comprehensive_metrics import ComprehensiveMetricsEvaluator
+    from evaluation.evaluation_runner import EvaluationRunner
 
 __all__ = [
     # 基类与数据结构

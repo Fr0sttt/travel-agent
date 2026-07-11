@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import asyncio
 import json
 import re
 from datetime import datetime, timedelta
@@ -36,7 +37,7 @@ def _find_first_list(payload: Any) -> list[Any]:
         return payload
     if not isinstance(payload, dict):
         return []
-    for key in ("items", "notes", "list", "data", "result", "results"):
+    for key in ("items", "notes", "list", "records", "data", "result", "results"):
         value = payload.get(key)
         if isinstance(value, list):
             return value
@@ -227,11 +228,11 @@ async def extract_poi_candidates_from_notes_with_ai(notes: list[Any], city: str,
     """优先用 DeepSeek 清洗候选地点，再回退到规则抽取。"""
     client = _get_deepseek_client()
     if client is None:
-        return extract_poi_candidates_from_notes(notes, city, limit)
+        return []
 
     compact_notes = _compact_note_payload(notes)
     if not compact_notes:
-        return extract_poi_candidates_from_notes(notes, city, limit)
+        return []
 
     prompt = (
         "你是旅行攻略地点抽取器。"
@@ -270,7 +271,7 @@ async def extract_poi_candidates_from_notes_with_ai(notes: list[Any], city: str,
         payload = json.loads(content)
         raw_candidates = payload.get("candidates")
         if not isinstance(raw_candidates, list):
-            return extract_poi_candidates_from_notes(notes, city, limit)
+            return []
 
         results: list[dict[str, Any]] = []
         seen: set[str] = set()
@@ -296,9 +297,10 @@ async def extract_poi_candidates_from_notes_with_ai(notes: list[Any], city: str,
             if len(results) >= limit:
                 break
 
-        return results or extract_poi_candidates_from_notes(notes, city, limit)
-    except Exception:
-        return extract_poi_candidates_from_notes(notes, city, limit)
+        return results
+    except Exception as exc:
+        print(f"[guide_search] LLM 景点提取失败 city={city!r}: {exc}", flush=True)
+        return []
 
 
 class JustOneGuideSearch:
@@ -325,6 +327,13 @@ class JustOneGuideSearch:
             fetched_at = datetime.fromisoformat(data.get("fetched_at", ""))
             if datetime.now() - fetched_at > timedelta(hours=settings.justoneapi_cache_ttl_hours):
                 return None
+            payload = data.get("payload") or {}
+            # 失败响应不能进入长期缓存，否则一次临时失败会阻断后续一周的搜索。
+            if isinstance(payload, dict) and (
+                str(payload.get("code", "0")) not in ("0", "200")
+                or payload.get("data") is None
+            ):
+                return None
             return data
         except Exception:
             return None
@@ -341,6 +350,53 @@ class JustOneGuideSearch:
         except Exception:
             # 缓存失败不能影响主链路，最多多花一次外部 API 调用成本。
             return
+
+    async def _request_endpoint(
+        self,
+        base_url: str,
+        endpoint: str,
+        params: dict[str, Any],
+        retries: int = 2,
+    ) -> dict[str, Any]:
+        """请求指定版本的小红书接口，供 V4 失败后的 V2 降级使用。"""
+        last_error = ""
+        payload: dict[str, Any] = {}
+        request_id = ""
+        http_status: int | None = None
+        for attempt in range(retries):
+            try:
+                async with httpx.AsyncClient(timeout=settings.justoneapi_timeout) as client:
+                    response = await client.get(f"{base_url}{endpoint}", params=params)
+                    http_status = response.status_code
+                    response.raise_for_status()
+                    payload = response.json()
+                code = str(payload.get("code", "0")) if isinstance(payload, dict) else "0"
+                request_id = str(payload.get("requestId") or "") if isinstance(payload, dict) else ""
+                if code in ("0", "200") and payload.get("data") is not None:
+                    return {
+                        "success": True,
+                        "payload": payload,
+                        "code": code,
+                        "request_id": request_id,
+                        "http_status": http_status,
+                        "attempts": attempt + 1,
+                        "endpoint": endpoint,
+                    }
+                last_error = f"JustOneAPI code={code}: {payload.get('message', 'data为空')}"
+            except Exception as exc:
+                last_error = str(exc)
+            if attempt < retries - 1:
+                await asyncio.sleep(1)
+        return {
+            "success": False,
+            "payload": payload,
+            "code": str(payload.get("code", "0")) if payload else "0",
+            "request_id": request_id,
+            "http_status": http_status,
+            "attempts": retries,
+            "endpoint": endpoint,
+            "error": last_error or "JustOneAPI 返回空数据",
+        }
 
     async def search_notes(self, city: str, days: int | None = None, interests: list[str] | None = None) -> dict[str, Any]:
         if not self.enabled():
@@ -364,13 +420,95 @@ class JustOneGuideSearch:
             "noteType": "ALL",
             "timeFilter": "ALL",
         }
-        async with httpx.AsyncClient(timeout=settings.justoneapi_timeout) as client:
-            response = await client.get(f"{base_url}{self.endpoint}", params=params)
-            response.raise_for_status()
-            payload = response.json()
+        payload: dict[str, Any] = {}
+        last_error = ""
+        request_id = ""
+        attempts = 0
+        http_status: int | None = None
+        for attempt in range(3):
+            attempts = attempt + 1
+            try:
+                async with httpx.AsyncClient(timeout=settings.justoneapi_timeout) as client:
+                    response = await client.get(f"{base_url}{self.endpoint}", params=params)
+                    http_status = response.status_code
+                    response.raise_for_status()
+                    payload = response.json()
+                code = str(payload.get("code", "0")) if isinstance(payload, dict) else "0"
+                data = payload.get("data") if isinstance(payload, dict) else None
+                request_id = str(payload.get("requestId") or "") if isinstance(payload, dict) else ""
+                if code in ("0", "200") and data is not None:
+                    break
+                last_error = f"JustOneAPI code={code}: {payload.get('message', 'data为空')}"
+            except Exception as exc:
+                last_error = str(exc)
+            if attempt < 2:
+                await asyncio.sleep(1 + attempt)
+
+        print(
+            f"[guide_search] endpoint={self.endpoint} keyword={keyword!r} "
+            f"attempts={attempts} http_status={http_status} code={payload.get('code') if payload else None} "
+            f"request_id={request_id or '-'} notes={len(_find_first_list(payload)) if payload else 0} "
+            f"error={last_error or '-'}",
+            flush=True,
+        )
+
+        code = str(payload.get("code", "0")) if isinstance(payload, dict) else "0"
+        if code not in ("0", "200") or payload.get("data") is None:
+            # V4 采集失败时尝试 V2；只有 V2 也失败才让上层看到小红书不可用。
+            v2 = await self._request_endpoint(
+                base_url,
+                "/api/xiaohongshu/search-note/v2",
+                params,
+                retries=2,
+            )
+            print(
+                f"[guide_search] fallback endpoint={v2.get('endpoint')} keyword={keyword!r} "
+                f"http_status={v2.get('http_status')} code={v2.get('code')} "
+                f"request_id={v2.get('request_id') or '-'} notes={len(_find_first_list(v2.get('payload') or {}))} "
+                f"error={v2.get('error') or '-'}",
+                flush=True,
+            )
+            if v2.get("success"):
+                v2_payload = v2.get("payload") or {}
+                self._write_cache(keyword, v2_payload)
+                return {
+                    "enabled": True,
+                    "cached": False,
+                    "keyword": keyword,
+                    "notes": _find_first_list(v2_payload),
+                    "api_code": v2.get("code"),
+                    "http_status": v2.get("http_status"),
+                    "request_id": v2.get("request_id"),
+                    "attempts": attempts + int(v2.get("attempts", 0)),
+                    "endpoint": v2.get("endpoint"),
+                    "attempted_endpoints": [self.endpoint, v2.get("endpoint")],
+                }
+            return {
+                "enabled": True,
+                "cached": False,
+                "keyword": keyword,
+                "notes": [],
+                "error": last_error or "JustOneAPI 返回空数据",
+                "source": "JustOneAPI 小红书搜索",
+                "api_code": code,
+                "http_status": http_status,
+                "request_id": request_id,
+                "attempts": attempts,
+                "endpoint": self.endpoint,
+            }
 
         self._write_cache(keyword, payload)
-        return {"enabled": True, "cached": False, "keyword": keyword, "notes": _find_first_list(payload)}
+        return {
+            "enabled": True,
+            "cached": False,
+            "keyword": keyword,
+            "notes": _find_first_list(payload),
+            "api_code": code,
+            "http_status": http_status,
+            "request_id": request_id,
+            "attempts": attempts,
+            "endpoint": self.endpoint,
+        }
 
     async def validate_with_amap(
         self,
@@ -381,7 +519,7 @@ class JustOneGuideSearch:
         limit: int | None = None,
     ) -> list[dict[str, Any]]:
         """候选地点先经过地理编码校验，再按城市中心距离过滤，避免把攻略文本里的泛词直接放进行程。"""
-        from agent.tools import geocode_location
+        from agent.tools import geocode_location, search_places
 
         validated: list[dict[str, Any]] = []
         seen: set[str] = set()
@@ -408,6 +546,49 @@ class JustOneGuideSearch:
             if center_lat is not None and center_lon is not None:
                 if _haversine_km(center_lat, center_lon, lat, lon) > 120:
                     continue
+
+            # 先用高德地理编码确认候选名称，再用高德 POI 搜索确认它确实
+            # 是地图中的地点，而不是攻略文本里的 vlog/活动描述或泛化词。
+            try:
+                amap_results = await search_places.ainvoke({
+                    "lat": lat,
+                    "lon": lon,
+                    "radius": 3000,
+                    "kinds": "interesting_places",
+                    "rate": "3",
+                    "keyword": name,
+                })
+                if isinstance(amap_results, str):
+                    amap_results = json.loads(amap_results)
+            except Exception:
+                continue
+            if not isinstance(amap_results, list) or not amap_results:
+                continue
+            if not any(
+                isinstance(item, dict)
+                and any(
+                    marker in str(item.get("source") or "")
+                    for marker in ("高德", "MCP")
+                )
+                for item in amap_results
+            ):
+                continue
+
+            matched = next(
+                (
+                    item for item in amap_results
+                    if isinstance(item, dict)
+                    and name in str(item.get("name") or "")
+                ),
+                None,
+            )
+            if not matched:
+                continue
+            matched_coordinates = matched.get("coordinates") or {}
+            matched_lat = _coerce_float(matched_coordinates.get("lat"))
+            matched_lon = _coerce_float(matched_coordinates.get("lon"))
+            if matched_lat is not None and matched_lon is not None:
+                lat, lon = matched_lat, matched_lon
 
             poi = {
                 "name": name,
@@ -436,6 +617,21 @@ async def search_guide_pois(
     skill = JustOneGuideSearch()
     try:
         note_result = await skill.search_notes(city=city, days=days, interests=interests)
+        if note_result.get("error"):
+            return {
+                "enabled": note_result.get("enabled", False),
+                "cached": False,
+                "keyword": note_result.get("keyword"),
+                "candidate_count": 0,
+                "poi_list": [],
+                "error": note_result["error"],
+                "api_code": note_result.get("api_code"),
+                "http_status": note_result.get("http_status"),
+                "request_id": note_result.get("request_id"),
+                "attempts": note_result.get("attempts", 0),
+                "endpoint": note_result.get("endpoint", JustOneGuideSearch.endpoint),
+                "source": "JustOneAPI 小红书搜索",
+            }
         notes = note_result.get("notes") or []
         candidates = await extract_poi_candidates_from_notes_with_ai(
             notes,
@@ -453,8 +649,14 @@ async def search_guide_pois(
             "enabled": note_result.get("enabled", False),
             "cached": note_result.get("cached", False),
             "keyword": note_result.get("keyword"),
+            "note_count": len(notes),
             "candidate_count": len(candidates),
             "poi_list": pois,
+            "api_code": note_result.get("api_code"),
+            "http_status": note_result.get("http_status"),
+            "request_id": note_result.get("request_id"),
+            "attempts": note_result.get("attempts", 0),
+            "endpoint": note_result.get("endpoint", JustOneGuideSearch.endpoint),
             "source": "JustOneAPI 小红书搜索 + 高德地图 MCP 校验",
         }
     except httpx.HTTPStatusError as exc:

@@ -19,11 +19,14 @@ from typing import Any
 from dataclasses import dataclass, field
 from collections import Counter
 
-from backend.app.evaluation.base import (
-    BaseEvaluator,
-    EvalResult,
-    TrialSegment,
-)
+try:
+    from backend.app.evaluation.base import BaseEvaluator, EvalResult, TrialSegment
+except ModuleNotFoundError:
+    from evaluation.base import BaseEvaluator, EvalResult, TrialSegment
+try:
+    from backend.app.evaluation.judge import TravelLLMJudge
+except ModuleNotFoundError:
+    from evaluation.judge import TravelLLMJudge
 
 
 # ---------------------------------------------------------------------------
@@ -100,7 +103,7 @@ class DoVerReasoningEvaluator(BaseEvaluator):
 
     def __init__(self) -> None:
         """初始化DoVer评估器"""
-        pass
+        self._judge = TravelLLMJudge()
 
     # ------------------------------------------------------------------
     #  核心评估接口
@@ -144,18 +147,12 @@ class DoVerReasoningEvaluator(BaseEvaluator):
             progress = self.check_milestones(trial, expected_milestones)
             milestone_progress.append(progress)
 
-        # 3. 计算Progress Made
-        progress_scores = []
-        for i in range(1, len(milestone_progress)):
-            progress = self.calculate_progress(
-                milestone_progress[i - 1], milestone_progress[i]
-            )
-            progress_scores.append(progress)
-
-        avg_progress = (
-            sum(progress_scores) / len(progress_scores)
-            if progress_scores else 0.0
-        )
+        # 一个完整规划默认就是一个 trial，进展应按该 trial 已完成的里程碑占比计算。
+        progress_scores = [
+            sum(1 for completed in progress.values() if completed) / max(len(progress), 1)
+            for progress in milestone_progress
+        ]
+        avg_progress = sum(progress_scores) / len(progress_scores) if progress_scores else 0.0
 
         # 4. 失败归因
         failures = self._attribute_failures(trials)
@@ -171,9 +168,21 @@ class DoVerReasoningEvaluator(BaseEvaluator):
         metrics = self._calculate_metrics(trials)
 
         # 综合分数：trial_success_rate * 0.5 + progress_made * 0.5
-        overall = metrics.get("trial_success_rate", 0) * 0.5 + (
-            (avg_progress + 1) / 2
-        ) * 0.5  # 将[-1,1]映射到[0,1]
+        overall = metrics.get("trial_success_rate", 0) * 0.5 + avg_progress * 0.5
+
+        judge = await self._judge.evaluate(
+            "DoVer.travel_execution",
+            "判断旅行规划执行轨迹是否按正确顺序推进，失败后是否基于新证据恢复，是否存在重复调用或无效步骤。",
+            {
+                "expected_milestones": expected_milestones,
+                "trajectory": trajectory,
+                "rule_metrics": metrics,
+                "failures": failures,
+            },
+            "只看可观测轨迹，不推测隐藏思维；缺少地理编码就直接搜索、天气失败后没有备选、重复失败且未恢复都应降低分数。成功完成关键里程碑且每次失败后有有效恢复才可 pass。",
+        )
+        if judge.get("score") is not None:
+            overall = overall * 0.5 + float(judge["score"]) * 0.5
 
         details = {
             "metrics": metrics,
@@ -183,7 +192,18 @@ class DoVerReasoningEvaluator(BaseEvaluator):
                 r.value for r in intervention_results
             ] if intervention_results else [],
             "progress_scores": progress_scores,
+            "judge": judge,
         }
+        hard_failures = []
+        completed_milestones = {
+            name for progress in milestone_progress for name, completed in progress.items() if completed
+        }
+        missing_milestones = [m for m in expected_milestones if m not in completed_milestones]
+        if missing_milestones:
+            hard_failures.append("missing_milestones:" + ",".join(missing_milestones[:8]))
+        if failures and not any(item.get("root_cause") for item in failures):
+            hard_failures.append("failure_without_root_cause")
+        details["hard_failures"] = hard_failures
 
         reasoning_parts = [
             f"Trial数量: {len(trials)}, 成功率: {metrics.get('trial_success_rate', 0):.2f}",
@@ -197,7 +217,8 @@ class DoVerReasoningEvaluator(BaseEvaluator):
             score=self._normalize_score(overall),
             details=details,
             reasoning="; ".join(reasoning_parts),
-            passed=self._pass_check(overall, threshold=0.5),
+            passed=self._pass_check(overall, threshold=0.5) and not hard_failures,
+            hard_failures=hard_failures,
         )
 
     def get_metric_names(self) -> list[str]:
@@ -228,11 +249,11 @@ class DoVerReasoningEvaluator(BaseEvaluator):
         """
         trials: list[list[dict]] = []
         current_trial: list[dict] = []
-        current_node: str | None = None
+        current_trial_id: str | None = None
 
         for entry in trajectory:
-            node = entry.get("node", "")
             entry_type = entry.get("type", "")
+            trial_id = entry.get("trial_id")
 
             # re-plan标记检测
             is_replan = entry.get("replan", False) or entry_type in [
@@ -241,16 +262,16 @@ class DoVerReasoningEvaluator(BaseEvaluator):
                 "recover",
             ]
 
-            # 节点切换或re-plan时创建新trial
-            if is_replan or (current_node and node != current_node):
+            # 节点切换不代表新的 trial，只有显式重试/重规划才切段。
+            if is_replan or (trial_id and current_trial_id and trial_id != current_trial_id):
                 if current_trial:
                     trials.append(current_trial)
                 current_trial = [entry]
-                current_node = node
+                current_trial_id = trial_id
             else:
                 current_trial.append(entry)
-                if not current_node:
-                    current_node = node
+                if current_trial_id is None:
+                    current_trial_id = trial_id
 
         if current_trial:
             trials.append(current_trial)
@@ -377,7 +398,7 @@ class DoVerReasoningEvaluator(BaseEvaluator):
         for trial in trials:
             # 判断trial是否失败
             has_error = any(
-                e.get("error") or e.get("status") == "failed"
+                e.get("error") or e.get("status") == "failed" or e.get("success") is False
                 for e in trial
             )
 
@@ -492,7 +513,7 @@ class DoVerReasoningEvaluator(BaseEvaluator):
 
         # 检查trial是否成功（没有错误）
         has_error = any(
-            e.get("error") or e.get("status") == "failed" for e in trial
+            e.get("error") or e.get("status") == "failed" or e.get("success") is False for e in trial
         )
 
         if has_error:
@@ -544,7 +565,7 @@ class DoVerReasoningEvaluator(BaseEvaluator):
 
         for trial in trials:
             has_error = any(
-                e.get("error") or e.get("status") == "failed"
+                e.get("error") or e.get("status") == "failed" or e.get("success") is False
                 for e in trial
             )
 
@@ -556,7 +577,7 @@ class DoVerReasoningEvaluator(BaseEvaluator):
             for entry in trial:
                 if entry.get("type") == "tool_call":
                     total_tool_calls += 1
-                    if not entry.get("error"):
+                    if not entry.get("error") and entry.get("success", True) is not False:
                         successful_tool_calls += 1
 
                 node = entry.get("node")

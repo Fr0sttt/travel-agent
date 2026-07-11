@@ -28,6 +28,8 @@ class EvalResult:
     details: dict
     reasoning: str
     passed: bool
+    judge: dict[str, Any] | None = None
+    hard_failures: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         """序列化为字典"""
@@ -37,6 +39,8 @@ class EvalResult:
             "details": self.details,
             "reasoning": self.reasoning,
             "passed": self.passed,
+            "judge": self.judge,
+            "hard_failures": self.hard_failures,
         }
 
 

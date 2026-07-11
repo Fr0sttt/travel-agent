@@ -15,12 +15,6 @@ type AMapOverlay = {
   setMap?: (map: any) => void;
 };
 
-type RouteGroup = {
-  day: number;
-  pois: POI[];
-  path: [number, number][];
-};
-
 const categoryColors: Record<string, string> = {
   attraction: '#219EBC',
   restaurant: '#E29578',
@@ -35,7 +29,7 @@ const categoryLabels: Record<string, string> = {
   transport: '交通',
 };
 
-const dayColors = ['#219EBC', '#2EC4B6', '#E29578', '#FF9F1C', '#06D6A0', '#8ECAE6'];
+const routeColor = '#1677FF';
 
 const fallbackCenter = {
   lng: 135.7681,
@@ -107,27 +101,6 @@ function getCenterFromPois(pois: POI[]) {
   const lat = validPois.reduce((sum, poi) => sum + poi.lat, 0) / validPois.length;
   const lng = validPois.reduce((sum, poi) => sum + poi.lng, 0) / validPois.length;
   return { lat, lng };
-}
-
-function buildRouteGroups(pois: POI[]): RouteGroup[] {
-  const dayMap = new Map<number, POI[]>();
-  pois.filter(hasValidCoords).forEach((poi) => {
-    const list = dayMap.get(poi.day) || [];
-    list.push(poi);
-    dayMap.set(poi.day, list);
-  });
-
-  return Array.from(dayMap.entries())
-    .sort(([a], [b]) => a - b)
-    .map(([day, dayPois]) => {
-      const sortedPois = [...dayPois].sort((a, b) => a.badge.localeCompare(b.badge, 'en', { numeric: true }));
-      return {
-        day,
-        pois: sortedPois,
-        // 兜底路径：仅当后端未返回真实道路坐标时使用，直连 POI 点
-        path: sortedPois.map((poi) => [poi.lng, poi.lat] as [number, number]),
-      };
-    });
 }
 
 function createMarkerContent(
@@ -214,7 +187,6 @@ export default function MapPanel() {
   const [mapError, setMapError] = useState<string | null>(null);
 
   const center = useMemo(() => getCenterFromPois(pois), [pois]);
-  const routeGroups = useMemo(() => buildRouteGroups(pois), [pois]);
 
   const clearOverlays = useCallback(() => {
     const map = mapInstanceRef.current;
@@ -287,7 +259,9 @@ export default function MapPanel() {
           resizeEnable: true,
           dragEnable: true,
           zoomEnable: true,
-          mapStyle: 'amap://styles/dark',
+          // 使用高德标准底图，保证道路、地名和 POI 的辨识度。
+          // 深色主题只应用于页面控件，不应覆盖地图本身的道路信息层级。
+          mapStyle: import.meta.env.VITE_AMAP_MAP_STYLE?.trim() || 'amap://styles/normal',
         });
 
         globalWindow.AMap.plugin(['AMap.ToolBar', 'AMap.Scale'], () => {
@@ -376,7 +350,7 @@ export default function MapPanel() {
       // 而不是把 POI 两两直连成一条直线。
       const polyline = new globalWindow.AMap.Polyline({
         path: routePolyline,
-        strokeColor: dayColors[0],
+        strokeColor: routeColor,
         strokeWeight: 6,
         strokeOpacity: 0.7,
         strokeStyle: 'solid',
@@ -388,25 +362,6 @@ export default function MapPanel() {
 
       map.add(polyline);
       polylineRefs.current.push(polyline);
-    } else {
-      // 兜底：没有真实路径数据时，按天把 POI 直连（明显是估算连线，非实际路网）
-      routeGroups.forEach((group) => {
-        if (group.path.length < 2) return;
-
-        const polyline = new globalWindow.AMap.Polyline({
-          path: group.path,
-          strokeColor: dayColors[(group.day - 1) % dayColors.length],
-          strokeWeight: 4,
-          strokeOpacity: 0.4,
-          strokeStyle: 'dashed',
-          lineJoin: 'round',
-          lineCap: 'round',
-          zIndex: 80,
-        });
-
-        map.add(polyline);
-        polylineRefs.current.push(polyline);
-      });
     }
 
     try {
@@ -414,17 +369,17 @@ export default function MapPanel() {
     } catch {
       // 兜底不打断用户操作
     }
-  }, [clearOverlays, focusPoi, hoveredPoi, mapReady, pois, routeGroups, routePolyline, selectedPoi]);
+  }, [clearOverlays, focusPoi, hoveredPoi, mapReady, pois, routePolyline, selectedPoi]);
 
   const selectedColor = selectedPoi ? categoryColors[selectedPoi.category] || '#219EBC' : '#219EBC';
 
   return (
-    <div className="relative w-full h-full overflow-hidden" style={{ background: '#081C4B' }}>
+    <div className="relative w-full h-full overflow-hidden" style={{ background: '#F3F6FA' }}>
       <div ref={mapContainerRef} className="absolute inset-0" />
 
       {!mapReady && !mapError && (
-        <div className="absolute inset-0 flex items-center justify-center bg-[#081C4B] text-[#EDF6F9]">
-          <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm">
+        <div className="absolute inset-0 flex items-center justify-center bg-[#F3F6FA] text-slate-700">
+          <div className="rounded-xl border border-slate-200 bg-white/90 px-4 py-3 text-sm shadow-sm">
             正在加载高德地图...
           </div>
         </div>
@@ -439,6 +394,12 @@ export default function MapPanel() {
               请在前端环境变量里配置 `VITE_AMAP_KEY`，如需安全密钥再补 `VITE_AMAP_SECURITY_JS_CODE`。
             </p>
           </div>
+        </div>
+      )}
+
+      {mapReady && pois.filter(hasValidCoords).length >= 2 && routePolyline.length < 2 && (
+        <div className="absolute top-4 right-4 z-20 rounded-lg border border-amber-200 bg-amber-50/95 px-3 py-2 text-xs text-amber-800 shadow-sm backdrop-blur">
+          暂无真实道路路线，仅显示地点；未使用直线连线代替。
         </div>
       )}
 

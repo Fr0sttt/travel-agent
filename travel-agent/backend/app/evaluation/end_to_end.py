@@ -13,11 +13,14 @@ import asyncio
 from typing import Any
 from dataclasses import dataclass, field
 
-from backend.app.evaluation.base import (
-    BaseEvaluator,
-    EvalResult,
-    DimensionWeight,
-)
+try:
+    from backend.app.evaluation.base import BaseEvaluator, EvalResult, DimensionWeight
+except ModuleNotFoundError:
+    from evaluation.base import BaseEvaluator, EvalResult, DimensionWeight
+try:
+    from backend.app.evaluation.judge import TravelLLMJudge
+except ModuleNotFoundError:
+    from evaluation.judge import TravelLLMJudge
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +109,7 @@ class RACEEndToEndEvaluator(BaseEvaluator):
         )
     """
 
-    def __init__(self, use_llm_judge: bool = True, model: str = "gpt-4o-mini") -> None:
+    def __init__(self, use_llm_judge: bool = True, model: str | None = None) -> None:
         """
         初始化RACE评估器
 
@@ -116,6 +119,8 @@ class RACEEndToEndEvaluator(BaseEvaluator):
         """
         self.use_llm_judge = use_llm_judge
         self.model = model
+        self._judge = TravelLLMJudge(model=model)
+        self._judge_results: dict[str, dict[str, Any]] = {}
         # 缓存维度权重，避免同一任务重复计算
         self._weight_cache: dict[str, dict[str, float]] = {}
 
@@ -143,6 +148,7 @@ class RACEEndToEndEvaluator(BaseEvaluator):
         constraints = input_data.get("constraints", {})
         generated = output_data.get("itinerary", "")
         reference = (context or {}).get("reference_itinerary")
+        self._judge_results = {}
 
         # 统一将 itinerary 转为字符串
         if isinstance(generated, dict):
@@ -177,7 +183,14 @@ class RACEEndToEndEvaluator(BaseEvaluator):
             "dimension_scores": {k: round(v, 4) for k, v in dimension_scores.items()},
             "weights": {k: round(v, 4) for k, v in weights.items()},
             "task_preview": task[:200] if task else "",
+            "judge": self._judge_results,
         }
+        hard_failures: list[str] = []
+        if constraints.get("destination") and constraints["destination"] not in generated_str:
+            hard_failures.append("destination_missing")
+        # 预算和天数是否真正满足需要结合结构化预算、每日安排和语义上下文，
+        # 交给 RACE Judge；这里只保留目的地完全缺失这种明确失败。
+        details["hard_failures"] = hard_failures
 
         score_formula = " + ".join(
             f"{dimension_scores[k]:.2f}*{weights[k]:.2f}" for k in dimension_scores
@@ -195,7 +208,8 @@ class RACEEndToEndEvaluator(BaseEvaluator):
             score=overall,
             details=details,
             reasoning="; ".join(reasoning_parts),
-            passed=self._pass_check(overall, threshold=0.6),
+            passed=self._pass_check(overall, threshold=0.6) and not hard_failures,
+            hard_failures=hard_failures,
         )
 
     def get_metric_names(self) -> list[str]:
@@ -355,10 +369,9 @@ class RACEEndToEndEvaluator(BaseEvaluator):
 
         # LLM-as-a-Judge 深度评估
         if self.use_llm_judge and checks > 0:
-            llm_score = await self._llm_judge_comp(generated, constraints)
-            # 启发式与LLM评分加权
             heuristic_score = score / checks if checks > 0 else 0.5
-            score = heuristic_score * 0.4 + llm_score * 0.6
+            llm_score = await self._llm_judge_comp(generated, constraints)
+            score = heuristic_score if llm_score is None else heuristic_score * 0.4 + llm_score * 0.6
         else:
             score = score / checks if checks > 0 else 0.5
 
@@ -408,7 +421,7 @@ class RACEEndToEndEvaluator(BaseEvaluator):
         # LLM-as-a-Judge
         if self.use_llm_judge:
             llm_score = await self._llm_judge_depth(generated)
-            score = score * 0.4 + llm_score * 0.6
+            score = score if llm_score is None else score * 0.4 + llm_score * 0.6
 
         return self._normalize_score(score)
 
@@ -536,73 +549,28 @@ class RACEEndToEndEvaluator(BaseEvaluator):
     # ------------------------------------------------------------------
     #  LLM-as-a-Judge
     # ------------------------------------------------------------------
-    async def _llm_judge_comp(self, generated: str, constraints: dict) -> float:
-        """使用LLM评估COMP维度"""
-        try:
-            client = _get_openai_client()
-            prompt = f"""
-评估以下旅行行程对用户需求的覆盖程度(0-1分)。
+    async def _llm_judge_comp(self, generated: str, constraints: dict) -> float | None:
+        """使用结构化 Judge 评估旅行需求覆盖度。"""
+        if not self.use_llm_judge:
+            return None
+        result = await self._judge.evaluate(
+            "RACE.COMP",
+            "判断行程是否覆盖目的地、天数、预算、兴趣、同行人和天气备选等需求。",
+            {"constraints": constraints, "itinerary": generated[:5000]},
+            "硬约束缺失直接判 fail；只覆盖部分约束为 soft_pass；所有关键约束均有对应安排和说明才可 pass。",
+        )
+        self._judge_results["COMP"] = result
+        return result.get("score")
 
-用户约束: {json.dumps(constraints, ensure_ascii=False)}
-
-生成的行程(前2000字):
-{generated[:2000]}
-
-请只输出一个0到1之间的浮点数分数，不需要解释。
-分数标准:
-- 0.9-1.0: 完美覆盖所有约束和需求
-- 0.7-0.9: 覆盖了大部分需求
-- 0.5-0.7: 覆盖了基本需求
-- 0.3-0.5: 遗漏了部分重要需求
-- 0.0-0.3: 严重遗漏需求
-"""
-            response = await client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1,
-                max_tokens=10,
-            )
-            content = response.choices[0].message.content.strip()
-            # 提取数字
-            import re as _re
-
-            match = _re.search(r"0?\.\d+", content)
-            if match:
-                return float(match.group())
-            return 0.5
-        except Exception:
-            return 0.5
-
-    async def _llm_judge_depth(self, generated: str) -> float:
-        """使用LLM评估DEPTH维度"""
-        try:
-            client = _get_openai_client()
-            prompt = f"""
-评估以下旅行行程的分析深度和洞察质量(0-1分)。
-
-行程内容(前2000字):
-{generated[:2000]}
-
-请只输出一个0到1之间的浮点数分数，不需要解释。
-分数标准:
-- 0.9-1.0: 提供了深入的文化背景、取舍分析和个性化推荐理由
-- 0.7-0.9: 有推荐理由和一些背景信息
-- 0.5-0.7: 有基本的推荐理由
-- 0.3-0.5: 理由简单，缺乏深度
-- 0.0-0.3: 几乎没有推荐理由
-"""
-            response = await client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1,
-                max_tokens=10,
-            )
-            content = response.choices[0].message.content.strip()
-            import re as _re
-
-            match = _re.search(r"0?\.\d+", content)
-            if match:
-                return float(match.group())
-            return 0.5
-        except Exception:
-            return 0.5
+    async def _llm_judge_depth(self, generated: str) -> float | None:
+        """使用结构化 Judge 评估推荐理由、取舍和备选方案质量。"""
+        if not self.use_llm_judge:
+            return None
+        result = await self._judge.evaluate(
+            "RACE.DEPTH",
+            "判断旅行行程是否解释了为什么这样安排，以及在天气、体力、预算变化时如何调整。",
+            {"itinerary": generated[:5000]},
+            "只出现景点清单而没有理由、相邻景点衔接和备选方案时不得超过 0.5；有可执行取舍和个性化解释才可达到 0.8 以上。",
+        )
+        self._judge_results["DEPTH"] = result
+        return result.get("score")

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import traceback
 import uuid
 from collections.abc import AsyncGenerator
@@ -71,6 +72,7 @@ class TravelAgent:
         memory_manager: Any | None = None,
         safety_guard: Any | None = None,
         langfuse_client: Any | None = None,
+        evaluation_service: Any | None = None,
     ):
         """
         初始化 Travel Agent
@@ -86,6 +88,7 @@ class TravelAgent:
         self.memory = memory_manager
         self.safety = safety_guard
         self.langfuse = langfuse_client
+        self.evaluation_service = evaluation_service
 
     async def plan_travel(
         self,
@@ -117,6 +120,7 @@ class TravelAgent:
         session_id = session_id or f"sess_{uuid.uuid4().hex[:8]}"
         call_id = uuid.uuid4().hex[:6]
         config = {"configurable": {"thread_id": session_id}}
+        trace_id: str | None = None
 
         print(
             f"[TravelAgent][{call_id}] plan_travel 被调用: "
@@ -163,6 +167,22 @@ class TravelAgent:
             input_state = create_initial_state(session_id, user_input)
             input_state["messages"] = [{"role": "user", "content": user_input}]
 
+        # 一次用户请求对应一个 Langfuse Trace；同一 session 继续对话时复用已有 Trace。
+        trace_id = existing_values.get("trace_id") if has_existing_state else None
+        if not trace_id and self.langfuse:
+            trace_id = self.langfuse.start_trace(
+                session_id=session_id,
+                user_input=user_input,
+                metadata={"call_id": call_id, "has_existing_state": has_existing_state},
+            )
+        if trace_id:
+            input_state["trace_id"] = trace_id
+            try:
+                from observability.langfuse_client import set_trace_id
+                set_trace_id(trace_id)
+            except Exception:
+                pass
+
         try:
             # final_state 的起点必须是完整的初始状态（input_state），不能只是
             # existing_values——全新对话时 existing_values 是空字典，如果不
@@ -173,12 +193,62 @@ class TravelAgent:
             final_state: dict[str, Any] = dict(existing_values)
             final_state.update(input_state)
             node_index = 0
+            previous_node = "START"
+            previous_completed_at = time.perf_counter()
 
             async for step in self.graph.astream(input_state, config=config, stream_mode="updates"):
                 # stream_mode="updates" 每次迭代给一个 {节点名: 该节点输出的状态更新}
                 for node_name, node_output in step.items():
                     node_index += 1
+                    node_started_at = time.perf_counter()
+                    before_snapshot = self._trace_snapshot(final_state)
+                    before_tool_calls = list(final_state.get("tool_calls") or [])
                     final_state.update(node_output)
+                    duration_ms = (node_started_at - previous_completed_at) * 1000
+                    previous_completed_at = time.perf_counter()
+                    after_snapshot = self._trace_snapshot(final_state)
+                    trajectory_entry = {
+                        "type": "node",
+                        "node": node_name,
+                        "from_node": previous_node,
+                        "timestamp": datetime.now().isoformat(),
+                        "duration_ms": round(duration_ms, 2),
+                        "input": before_snapshot,
+                        "output": after_snapshot,
+                        "success": True,
+                    }
+                    final_state.setdefault("trajectory", []).append(trajectory_entry)
+                    final_state.setdefault("node_snapshots", []).append({
+                        "node": node_name,
+                        "timestamp": trajectory_entry["timestamp"],
+                        "duration_ms": trajectory_entry["duration_ms"],
+                        "state": after_snapshot,
+                    })
+                    # 将节点内新增的工具调用展开成独立轨迹事件，供 AgentWorld 和 DoVer 评测。
+                    current_tool_calls = list(final_state.get("tool_calls") or [])
+                    for tool_call in current_tool_calls[len(before_tool_calls):]:
+                        final_state.setdefault("trajectory", []).append({
+                            "type": "tool_call",
+                            "node": tool_call.get("node", node_name) if isinstance(tool_call, dict) else node_name,
+                            "tool_name": tool_call.get("tool_name", "") if isinstance(tool_call, dict) else "",
+                            "arguments": (tool_call.get("arguments") or tool_call.get("input") or {}) if isinstance(tool_call, dict) else {},
+                            "result": tool_call.get("result") if isinstance(tool_call, dict) else None,
+                            "success": tool_call.get("success", True) if isinstance(tool_call, dict) else True,
+                            "error": tool_call.get("error") if isinstance(tool_call, dict) else None,
+                            "timestamp": tool_call.get("timestamp", datetime.now().isoformat()) if isinstance(tool_call, dict) else datetime.now().isoformat(),
+                        })
+                    if self.langfuse and trace_id:
+                        self.langfuse.log_state_transition(
+                            trace_id, previous_node, node_name, after_snapshot
+                        )
+                        self.langfuse.log_node_execution(
+                            trace_id,
+                            node_name,
+                            before_snapshot,
+                            after_snapshot,
+                            duration_ms,
+                        )
+                    previous_node = node_name
 
                     status_msg = _NODE_STATUS_MESSAGES.get(node_name, f"执行 {node_name}...")
                     print(
@@ -235,6 +305,8 @@ class TravelAgent:
                         "session_id": session_id,
                     },
                 )
+                if self.langfuse:
+                    self.langfuse.end_trace(trace_id, final_output=follow_up, status="clarify")
                 return
 
             if intent == "faq_about_itinerary" and qa_response:
@@ -247,6 +319,8 @@ class TravelAgent:
                     "reply",
                     {"message": qa_response, "session_id": session_id},
                 )
+                if self.langfuse:
+                    self.langfuse.end_trace(trace_id, final_output=qa_response, status="success")
                 return
 
             if intent == "chitchat" and chitchat_response:
@@ -259,6 +333,8 @@ class TravelAgent:
                     "reply",
                     {"message": chitchat_response, "session_id": session_id},
                 )
+                if self.langfuse:
+                    self.langfuse.end_trace(trace_id, final_output=chitchat_response, status="success")
                 return
 
             # 走到这里说明完整规划流程跑完了，itinerary_md 应该有内容
@@ -275,6 +351,38 @@ class TravelAgent:
                     await self.memory.process_interaction(user_input, final_reply, final_state)
                 except Exception as e:
                     print(f"[TravelAgent][{call_id}] 写入记忆失败: {e}")
+
+            evaluation_run_id = None
+            if self.evaluation_service:
+                evaluation_run_id = self.evaluation_service.submit(
+                    self._build_evaluation_data(final_state, user_input, session_id)
+                )
+                final_state["evaluation_meta"] = {
+                    "run_id": evaluation_run_id,
+                    "status": "queued",
+                    "queued_at": datetime.now().isoformat(),
+                }
+
+            # 将本轮可观测轨迹和评测任务 ID 写回 LangGraph checkpoint，支持后续复盘。
+            try:
+                await self.graph.aupdate_state(
+                    config,
+                    {
+                        "trace_id": trace_id,
+                        "trajectory": final_state.get("trajectory", []),
+                        "node_snapshots": final_state.get("node_snapshots", []),
+                        "evaluation_meta": final_state.get("evaluation_meta"),
+                    },
+                )
+            except Exception as exc:
+                print(f"[TravelAgent][{call_id}] 保存评测轨迹失败: {exc}", flush=True)
+
+            if self.langfuse:
+                self.langfuse.end_trace(
+                    trace_id,
+                    final_output=itinerary_md,
+                    status="success",
+                )
 
             response = AgentResponse(
                 session_id=session_id,
@@ -295,6 +403,7 @@ class TravelAgent:
                     "itinerary": itinerary_md,
                     "risk_alerts": risk_alerts,
                     "session_id": session_id,
+                    "evaluation_run_id": evaluation_run_id,
                     "response": response.model_dump(),
                 },
             )
@@ -308,6 +417,8 @@ class TravelAgent:
                 f"[TravelAgent][{call_id}] plan_travel 内部异常，完整堆栈如下:\n{error_detail}",
                 flush=True,
             )
+            if self.langfuse:
+                self.langfuse.end_trace(trace_id, status="error")
             yield self._format_event(
                 "error",
                 {
@@ -316,6 +427,92 @@ class TravelAgent:
                     "session_id": session_id,
                 },
             )
+
+    @staticmethod
+    def _trace_snapshot(state: dict[str, Any]) -> dict[str, Any]:
+        """生成用于 Trace 和评测的轻量状态快照，不上传完整消息和大文本。"""
+        return {
+            "current_node": state.get("current_node"),
+            "user_intent": state.get("user_intent"),
+            "needs_clarification": state.get("needs_clarification", False),
+            "poi_count": len(state.get("poi_list") or []),
+            "route_count": len(state.get("route") or []),
+            "weather_count": len(state.get("weather") or []),
+            "tool_call_count": len(state.get("tool_calls") or []),
+            "itinerary_length": len(state.get("itinerary") or ""),
+            "risk_alert_count": len(state.get("risk_alerts") or []),
+        }
+
+    @staticmethod
+    def _build_evaluation_data(
+        state: dict[str, Any], user_input: str, session_id: str
+    ) -> dict[str, Any]:
+        """把 LangGraph 最终状态转换成四层评测统一输入契约。"""
+        poi_list = state.get("poi_list") or []
+        route = state.get("route") or []
+        weather = state.get("weather") or []
+        budget = state.get("budget") or []
+        tool_calls = state.get("tool_calls") or []
+
+        # 评测需要“事实 -> 证据”的结构化输入。正文里的“数据来源说明”只是
+        # 展示文案，不能代替证据；这里把真实工具返回结果和状态中的来源字段
+        # 统一整理给 FACT 与综合评测使用。
+        cited_sources: list[dict[str, Any]] = []
+
+        def add_source(source_type: str, source: Any, content: Any, metadata: dict[str, Any] | None = None) -> None:
+            if not source and not content:
+                return
+            cited_sources.append({
+                "source_type": source_type,
+                "source": str(source or source_type),
+                "url": str(source or source_type),
+                "content": content if isinstance(content, str) else json.dumps(content, ensure_ascii=False, default=str)[:6000],
+                "metadata": metadata or {},
+            })
+
+        for poi in poi_list:
+            if isinstance(poi, dict):
+                add_source("poi", poi.get("source"), poi, {"name": poi.get("name"), "category": poi.get("category")})
+        for item in weather:
+            if isinstance(item, dict):
+                add_source("weather", item.get("source"), item, {"date": item.get("date")})
+        for segment in route:
+            if isinstance(segment, dict):
+                add_source("route", segment.get("source"), segment, {"from": segment.get("from_poi"), "to": segment.get("to_poi")})
+        for item in (budget if isinstance(budget, list) else []):
+            if isinstance(item, dict):
+                add_source("budget", item.get("source") or "规则估算", item, {"category": item.get("category")})
+
+        # 工具调用是最底层的可审计证据。只加入成功且确实有结果的调用，
+        # 避免把异常文本当成事实来源。
+        for call in tool_calls:
+            if not isinstance(call, dict) or not call.get("success", True) or not call.get("result"):
+                continue
+            add_source(
+                "tool_result",
+                call.get("tool_name"),
+                call.get("result"),
+                {"node": call.get("node"), "arguments": call.get("arguments") or call.get("input") or {}},
+            )
+
+        return {
+            "session_id": session_id,
+            "trace_id": state.get("trace_id"),
+            "user_request": user_input,
+            "constraints": state.get("constraints") or {},
+            "preferences": state.get("preference") or {},
+            "itinerary": state.get("itinerary") or "",
+            "route_plan": state.get("route") or [],
+            "weather": state.get("weather") or [],
+            "budget": state.get("budget") or {},
+            "trajectory": state.get("trajectory") or [],
+            "node_snapshots": state.get("node_snapshots") or [],
+            "tool_calls": tool_calls,
+            "cited_sources": cited_sources,
+            "actions": state.get("confirmation_required") or [],
+            "risk_alerts": state.get("risk_alerts") or [],
+            "replan_events": state.get("replan_events") or [],
+        }
 
     async def get_session_state(self, session_id: str) -> dict[str, Any] | None:
         """

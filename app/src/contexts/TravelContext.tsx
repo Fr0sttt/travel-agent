@@ -120,8 +120,9 @@ export function TravelProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const pollEvaluation = useCallback(async (targetSessionId: string) => {
-    for (let attempt = 0; attempt < 8; attempt += 1) {
-      await new Promise((resolve) => window.setTimeout(resolve, attempt === 0 ? 300 : 1000));
+    // 评测包含多次 LLM Judge 调用，不能只等几秒就把它误判成“没有触发”。
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, attempt === 0 ? 300 : 1500));
       try {
         const latestState = await getSession(targetSessionId);
         setSessionState(latestState);

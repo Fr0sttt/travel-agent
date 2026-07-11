@@ -20,7 +20,14 @@ import asyncio
 from typing import Any
 from dataclasses import dataclass, field
 
-from backend.app.evaluation.base import BaseEvaluator, EvalResult
+try:
+    from backend.app.evaluation.base import BaseEvaluator, EvalResult
+except ModuleNotFoundError:
+    from evaluation.base import BaseEvaluator, EvalResult
+try:
+    from backend.app.evaluation.judge import TravelLLMJudge
+except ModuleNotFoundError:
+    from evaluation.judge import TravelLLMJudge
 
 
 # ---------------------------------------------------------------------------
@@ -45,6 +52,7 @@ def _get_openai_client():
 # 已知的可信数据源
 # ---------------------------------------------------------------------------
 TRUSTED_SOURCES = [
+    "高德地图", "高德地图 MCP", "JustOneAPI", "小红书",
     "OpenTripMap",
     "Nominatim",
     "OSRM",
@@ -111,7 +119,7 @@ class FACTRAGEvaluator(BaseEvaluator):
         )
     """
 
-    def __init__(self, use_llm_judge: bool = True, model: str = "gpt-4o-mini") -> None:
+    def __init__(self, use_llm_judge: bool = True, model: str | None = None) -> None:
         """
         初始化FACT评估器
 
@@ -121,6 +129,8 @@ class FACTRAGEvaluator(BaseEvaluator):
         """
         self.use_llm_judge = use_llm_judge
         self.model = model
+        self._judge = TravelLLMJudge(model=model)
+        self._judge_results: list[dict[str, Any]] = []
         # 缓存support judgment结果
         self._support_cache: dict[str, bool] = {}
 
@@ -147,6 +157,7 @@ class FACTRAGEvaluator(BaseEvaluator):
         response = input_data.get("response", "")
         cited_sources = output_data.get("cited_sources", [])
         retrieved_contexts = (context or {}).get("retrieved_contexts", [])
+        self._judge_results = []
 
         if not response:
             return EvalResult(
@@ -188,10 +199,39 @@ class FACTRAGEvaluator(BaseEvaluator):
         # 6. Source Grounding
         grounding = self._evaluate_source_grounding(response, cited_sources)
 
+        # 当前项目的工具结果通常不是正文 URL，而是“工具名 + 结构化结果”。
+        # 没有内嵌 URL 时，不能把 FACT 简化成“引用数为 0”；让 Judge 根据
+        # 行程陈述和真实工具证据判断是否有来源支撑。
+        if cited_sources:
+            structured_judge = await self._judge.evaluate(
+                "FACT.structured_grounding",
+                "判断旅行行程中的地点、天气、路线和预算陈述是否被真实工具结果支撑。",
+                {
+                    "response": response[:6000],
+                    "structured_sources": cited_sources[:40],
+                    "inline_citations": [p.to_dict() for p in deduped_pairs[:20]],
+                },
+                "只接受证据中明确出现或可直接推导的事实；工具结果为空、来源与陈述无关、或把攻略提及当成确定事实都应降分。没有证据的陈述不能因为措辞流畅而得高分。",
+            )
+            self._judge_results.append({"type": "structured_grounding", **structured_judge})
+            if structured_judge.get("score") is not None:
+                grounding["judge_score"] = structured_judge["score"]
+                grounding["judge_reason"] = structured_judge.get("reason", "")
+                grounding["score"] = grounding["score"] * 0.3 + float(structured_judge["score"]) * 0.7
+                if not deduped_pairs:
+                    # 没有 URL 对时，用结构化证据 Judge 作为 Citation Accuracy 的替代量。
+                    c_acc = float(structured_judge["score"])
+                    e_cit = min(len(cited_sources), 2)
+            elif not deduped_pairs:
+                # Judge 不可用时仍保留“有多少结构化证据”的事实，不把基础设施
+                # 故障伪装成 Agent 没有引用；报告会通过 judge status 告知降级原因。
+                c_acc = 0.5
+                e_cit = min(len(cited_sources), 2)
+
         # 综合FACT分数
         fact_score = (
             c_acc * 0.40
-            + min(e_cit / 2.0, 0.5) * 0.30  # 归一化到0-0.5
+            + min(e_cit / 2.0, 1.0) * 0.30
             + grounding["score"] * 0.30
         )
 
@@ -203,7 +243,14 @@ class FACTRAGEvaluator(BaseEvaluator):
             "supported_count": len(supported_pairs),
             "source_grounding": grounding,
             "pairs_sample": [p.to_dict() for p in supported_pairs[:10]],
+            "judge": self._judge_results[:20],
         }
+        hard_failures: list[str] = []
+        if deduped_pairs and not supported_pairs and not cited_sources:
+            hard_failures.append("no_citation_support")
+        if self.use_llm_judge and any(item.get("status") == "unavailable" for item in self._judge_results):
+            hard_failures.append("citation_judge_unavailable")
+        details["hard_failures"] = hard_failures
 
         reasoning_parts = [
             f"引用准确率(C.Acc.): {c_acc:.2f}",
@@ -217,7 +264,8 @@ class FACTRAGEvaluator(BaseEvaluator):
             score=self._normalize_score(fact_score),
             details=details,
             reasoning="; ".join(reasoning_parts),
-            passed=self._pass_check(fact_score, threshold=0.5),
+            passed=self._pass_check(fact_score, threshold=0.5) and not hard_failures,
+            hard_failures=hard_failures,
         )
 
     def get_metric_names(self) -> list[str]:
@@ -367,7 +415,12 @@ class FACTRAGEvaluator(BaseEvaluator):
             llm_result = await self._llm_support_judgment(
                 statement, url, source_content
             )
-            result = llm_result
+            self._judge_results.append({
+                "statement": statement[:300],
+                "url": url,
+                **llm_result,
+            })
+            result = bool(llm_result.get("score", 0) >= 0.6) if llm_result.get("score") is not None else heuristic_score >= 0.5
         else:
             # 无LLM时，使用启发式分数
             result = heuristic_score >= 0.5
@@ -419,30 +472,14 @@ class FACTRAGEvaluator(BaseEvaluator):
 
     async def _llm_support_judgment(
         self, statement: str, url: str, source_content: str
-    ) -> bool:
-        """使用LLM判断来源是否支持陈述"""
-        try:
-            client = _get_openai_client()
-            prompt = f"""
-判断以下来源内容是否支持该陈述。
-
-陈述: {statement}
-来源URL: {url}
-来源内容(前1500字):
-{source_content[:1500]}
-
-请只回答 "支持" 或 "不支持"，不要其他解释。
-"""
-            response = await client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1,
-                max_tokens=10,
-            )
-            content = response.choices[0].message.content.strip()
-            return "支持" in content and "不支持" not in content
-        except Exception:
-            return False
+    ) -> dict[str, Any]:
+        """使用结构化 Judge 判断来源是否真正支持陈述。"""
+        return await self._judge.evaluate(
+            "FACT.statement_support",
+            "判断来源内容是否支持旅行行程中的事实性陈述。",
+            {"statement": statement, "url": url, "source_content": source_content[:5000]},
+            "来源必须直接支持陈述中的地点、时间、价格、营业信息或天气事实；仅主题相近不能算支持，无法判断时降低置信度。",
+        )
 
     # ------------------------------------------------------------------
     #  Step 4: 计算 Citation Accuracy
@@ -511,6 +548,13 @@ class FACTRAGEvaluator(BaseEvaluator):
             if source.lower() in response.lower():
                 found_sources.append(source)
 
+        # 来源可能只存在于结构化证据里，而不一定被正文完整打印出来。
+        structured_source_names = {
+            str(item.get("source") or item.get("source_type"))
+            for item in cited_sources
+            if isinstance(item, dict) and (item.get("source") or item.get("source_type"))
+        }
+
         # 不确定性披露
         uncertainty_keywords = [
             "不确定", "可能", "仅供参考", "估算", "约",
@@ -522,7 +566,7 @@ class FACTRAGEvaluator(BaseEvaluator):
         has_dates = bool(re.search(r'\d{4}-\d{2}-\d{2}', response))
 
         # 来源多样性评分
-        source_diversity = min(0.5, len(found_sources) * 0.125)
+        source_diversity = min(0.5, (len(found_sources) + len(structured_source_names)) * 0.125)
 
         # 综合接地性分数
         score = source_diversity
@@ -532,7 +576,8 @@ class FACTRAGEvaluator(BaseEvaluator):
         return {
             "score": round(score, 4),
             "found_sources": found_sources,
-            "source_count": len(found_sources),
+            "structured_sources": sorted(structured_source_names),
+            "source_count": len(found_sources) + len(structured_source_names),
             "has_uncertainty_disclosure": has_uncertainty,
             "has_date_annotations": has_dates,
         }

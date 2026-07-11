@@ -19,11 +19,14 @@ from typing import Any
 from dataclasses import dataclass, field
 from collections import Counter
 
-from backend.app.evaluation.base import (
-    BaseEvaluator,
-    EvalResult,
-    ToolCallRecord,
-)
+try:
+    from backend.app.evaluation.base import BaseEvaluator, EvalResult, ToolCallRecord
+except ModuleNotFoundError:
+    from evaluation.base import BaseEvaluator, EvalResult, ToolCallRecord
+try:
+    from backend.app.evaluation.judge import TravelLLMJudge
+except ModuleNotFoundError:
+    from evaluation.judge import TravelLLMJudge
 
 
 # ---------------------------------------------------------------------------
@@ -44,7 +47,7 @@ TOOL_EXPECTATIONS: dict[str, dict[str, Any]] = {
     },
     "destination_search": {
         "required_tools": ["geocode_location", "search_places"],
-        "optional_tools": [],
+        "optional_tools": ["guide_search", "destination_search"],
         "description": "必须先地理编码，再搜索POI",
         "forbidden_tools": [],
     },
@@ -89,33 +92,32 @@ TOOL_EXPECTATIONS: dict[str, dict[str, Any]] = {
 # 工具参数schema定义
 TOOL_PARAMETER_SCHEMA: dict[str, dict[str, Any]] = {
     "geocode_location": {
-        "required": ["location"],
-        "types": {"location": str, "country": str},
+        "required": ["query"],
+        "types": {"query": str},
         "constraints": {
-            "location": lambda v: len(str(v)) > 0,
+            "query": lambda v: len(str(v)) > 0,
         },
     },
     "search_places": {
         "required": ["lat", "lon"],
-        "types": {"lat": (int, float), "lon": (int, float), "radius": int, "limit": int},
+        "types": {"lat": (int, float), "lon": (int, float), "radius": (int, float), "kinds": str, "rate": str},
         "constraints": {
             "lat": lambda v: -90 <= float(v) <= 90,
             "lon": lambda v: -180 <= float(v) <= 180,
-            "radius": lambda v: 0 < int(v) <= 50000,
-            "limit": lambda v: 0 < int(v) <= 100,
+            "radius": lambda v: 0 < float(v) <= 50000,
         },
     },
     "estimate_route": {
-        "required": ["from_lat", "from_lon", "to_lat", "to_lon"],
+        "required": ["start_lat", "start_lon", "end_lat", "end_lon"],
         "types": {
-            "from_lat": (int, float), "from_lon": (int, float),
-            "to_lat": (int, float), "to_lon": (int, float),
+            "start_lat": (int, float), "start_lon": (int, float),
+            "end_lat": (int, float), "end_lon": (int, float),
         },
         "constraints": {
-            "from_lat": lambda v: -90 <= float(v) <= 90,
-            "from_lon": lambda v: -180 <= float(v) <= 180,
-            "to_lat": lambda v: -90 <= float(v) <= 90,
-            "to_lon": lambda v: -180 <= float(v) <= 180,
+            "start_lat": lambda v: -90 <= float(v) <= 90,
+            "start_lon": lambda v: -180 <= float(v) <= 180,
+            "end_lat": lambda v: -90 <= float(v) <= 90,
+            "end_lon": lambda v: -180 <= float(v) <= 180,
         },
     },
     "get_weather": {
@@ -163,7 +165,7 @@ class AgentWorldToolEvaluator(BaseEvaluator):
 
     def __init__(self) -> None:
         """初始化Agent-World工具评估器"""
-        pass
+        self._judge = TravelLLMJudge()
 
     # ------------------------------------------------------------------
     #  核心评估接口
@@ -223,6 +225,24 @@ class AgentWorldToolEvaluator(BaseEvaluator):
             + reward * 0.15
         )
 
+        judge = await self._judge.evaluate(
+            "AgentWorld.travel_tools",
+            "判断旅行规划 Agent 的工具选择、参数、调用顺序和失败处理是否合理。",
+            {
+                "task": task,
+                "tool_calls": tool_calls,
+                "rule_checks": {
+                    "correctness": correctness_scores,
+                    "parameters": param_result,
+                    "chain": chain_result,
+                    "reward": reward,
+                },
+            },
+            "规则检查负责硬性 schema、必需工具和顺序；Judge 只补充语义策略判断。没有坐标时调用路线工具、没有天气结果却声称天气确定、工具失败后重复同样参数，都应判为策略失败。",
+        )
+        if judge.get("score") is not None:
+            overall = overall * 0.6 + float(judge["score"]) * 0.4
+
         details = {
             "correctness": {
                 k: {"score": round(v["score"], 4), "missing": v.get("missing", []),
@@ -232,7 +252,21 @@ class AgentWorldToolEvaluator(BaseEvaluator):
             "parameters": param_result,
             "tool_chain": chain_result,
             "verifiable_reward": round(reward, 4),
+            "judge": judge,
         }
+        hard_failures: list[str] = []
+        missing_tools = [
+            f"{node}:{tool}"
+            for node, item in correctness_scores.items()
+            for tool in item.get("missing", [])
+        ]
+        if missing_tools:
+            hard_failures.append("missing_required_tools:" + ",".join(missing_tools[:8]))
+        if any(item.get("issues") for item in param_result.get("details", [])):
+            hard_failures.append("invalid_tool_parameters")
+        # 单次工具失败不直接判死：旅行规划允许在高德/天气失败后换策略，
+        # 是否恢复、是否继续编造结论交给 Judge 结合后续轨迹判断。
+        details["hard_failures"] = hard_failures
 
         reasoning_parts = [
             f"工具正确性: {correctness_avg:.2f}",
@@ -246,7 +280,8 @@ class AgentWorldToolEvaluator(BaseEvaluator):
             score=self._normalize_score(overall),
             details=details,
             reasoning="; ".join(reasoning_parts),
-            passed=self._pass_check(overall, threshold=0.6),
+            passed=self._pass_check(overall, threshold=0.6) and not hard_failures,
+            hard_failures=hard_failures,
         )
 
     def get_metric_names(self) -> list[str]:
@@ -285,6 +320,9 @@ class AgentWorldToolEvaluator(BaseEvaluator):
             node_calls = [
                 c for c in tool_calls if c.get("node") == node_name
             ]
+            # 当前会话没有执行到该节点时，不把“未调用工具”误判成缺失工具。
+            if not node_calls:
+                continue
             tools_used = [
                 c.get("tool_name", "") for c in node_calls if c.get("tool_name")
             ]

@@ -381,7 +381,9 @@ class ToolCallRecord(BaseModel):
 
     tool_name: str = Field(..., description="工具名称")
     input: dict[str, Any] = Field(default_factory=dict, description="输入参数")
-    output: dict[str, Any] = Field(default_factory=dict, description="输出结果")
+    # 工具返回值没有统一容器类型：POI 搜索返回列表，天气/预算返回字典，
+    # 部分失败场景还可能返回字符串或空值，因此这里不能限制为 dict。
+    output: Any = Field(default=None, description="工具原始输出结果")
     latency_ms: float = Field(default=0.0, ge=0, description="执行耗时（毫秒）")
     timestamp: str = Field(
         default_factory=lambda: datetime.now().isoformat(), description="调用时间"

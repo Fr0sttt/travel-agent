@@ -21,14 +21,20 @@ import asyncio
 from datetime import datetime
 from typing import Any
 
-from backend.app.evaluation.base import BaseEvaluator, EvalResult, EvalReport
-from backend.app.evaluation.end_to_end import RACEEndToEndEvaluator
-from backend.app.evaluation.reasoning_eval import DoVerReasoningEvaluator
-from backend.app.evaluation.tool_eval import AgentWorldToolEvaluator
-from backend.app.evaluation.rag_eval import FACTRAGEvaluator
-from backend.app.evaluation.comprehensive_metrics import (
-    ComprehensiveMetricsEvaluator,
-)
+try:
+    from backend.app.evaluation.base import BaseEvaluator, EvalResult, EvalReport
+    from backend.app.evaluation.end_to_end import RACEEndToEndEvaluator
+    from backend.app.evaluation.reasoning_eval import DoVerReasoningEvaluator
+    from backend.app.evaluation.tool_eval import AgentWorldToolEvaluator
+    from backend.app.evaluation.rag_eval import FACTRAGEvaluator
+    from backend.app.evaluation.comprehensive_metrics import ComprehensiveMetricsEvaluator
+except ModuleNotFoundError:
+    from evaluation.base import BaseEvaluator, EvalResult, EvalReport
+    from evaluation.end_to_end import RACEEndToEndEvaluator
+    from evaluation.reasoning_eval import DoVerReasoningEvaluator
+    from evaluation.tool_eval import AgentWorldToolEvaluator
+    from evaluation.rag_eval import FACTRAGEvaluator
+    from evaluation.comprehensive_metrics import ComprehensiveMetricsEvaluator
 
 
 # ---------------------------------------------------------------------------
@@ -382,11 +388,13 @@ class EvaluationRunner:
         Returns:
             EvalResult: 评估结果
         """
+        constraints = self._normalize_constraints(session_data)
+
         if eval_type == "end_to_end":
             return await evaluator.evaluate(
                 input_data={
                     "user_request": session_data.get("user_request", ""),
-                    "constraints": session_data.get("constraints", {}),
+                    "constraints": constraints,
                 },
                 output_data={
                     "itinerary": session_data.get("itinerary", {}),
@@ -402,12 +410,16 @@ class EvaluationRunner:
                     "expected_milestones": session_data.get(
                         "expected_milestones",
                         [
-                            "extract_preferences",
-                            "geocode_destination",
-                            "search_pois",
-                            "calculate_distances",
-                            "fetch_weather",
-                            "estimate_categories",
+                            "preference_collector",
+                            "constraint_normalizer",
+                            "geocode_location",
+                            "search_places",
+                            "estimate_route",
+                            "get_weather",
+                            "estimate_budget",
+                            "itinerary_synthesizer",
+                            "safety_reviewer",
+                            "output_formatter",
                         ],
                     ),
                 },
@@ -459,12 +471,45 @@ class EvaluationRunner:
                 output_data={
                     "itinerary": session_data.get("itinerary", {}),
                     "route_plan": session_data.get("route_plan", []),
-                    "actions": session_data.get("actions", []),
+                    "actions": session_data.get("actions") or session_data.get("confirmation_required", []),
+                },
+                context={
+                    "constraints": constraints,
+                    "cited_sources": session_data.get("cited_sources", []),
+                    "weather": session_data.get("weather", []),
+                    "risk_alerts": session_data.get("risk_alerts", []),
                 },
             )
 
         else:
             raise ValueError(f"未知的评估类型: {eval_type}")
+
+    @staticmethod
+    def _normalize_constraints(session_data: dict[str, Any]) -> dict[str, Any]:
+        """把偏好和嵌套约束归一化成评测器统一使用的平面契约。"""
+        preference = session_data.get("preferences") or session_data.get("preference") or {}
+        preference = dict(preference) if isinstance(preference, dict) else {}
+        raw = session_data.get("constraints") or {}
+        raw = dict(raw) if isinstance(raw, dict) else {}
+        hard = raw.get("hard_constraints") or {}
+        soft = raw.get("soft_constraints") or {}
+
+        normalized = dict(preference)
+        if normalized.get("budget_cny") is None and hard.get("budget_max") is not None:
+            normalized["budget_cny"] = hard.get("budget_max")
+        if not normalized.get("dietary_restrictions") and hard.get("dietary"):
+            normalized["dietary_restrictions"] = hard.get("dietary")
+        if not normalized.get("accessibility_needs") and hard.get("accessibility"):
+            normalized["accessibility_needs"] = hard.get("accessibility")
+        if not normalized.get("interests") and soft.get("interests"):
+            normalized["interests"] = soft.get("interests")
+        if not normalized.get("pace_preference") and soft.get("pace"):
+            normalized["pace_preference"] = soft.get("pace")
+        if not normalized.get("transportation_preference") and soft.get("transportation"):
+            normalized["transportation_preference"] = soft.get("transportation")
+        normalized["implicit_needs"] = raw.get("implicit_needs") or []
+        normalized["constraint_summary"] = raw.get("constraint_summary") or normalized.get("constraint_summary", "")
+        return normalized
 
     def _generate_recommendations(self, results: list[EvalResult]) -> list[str]:
         """

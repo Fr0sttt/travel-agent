@@ -106,6 +106,11 @@ class TravelState(TypedDict, total=False):
     session_id: str
     trace_id: str | None
     tool_calls: list
+    trajectory: list
+    node_snapshots: list
+    cited_sources: list
+    replan_events: list
+    evaluation_meta: dict | None
     needs_clarification: bool
     safety_approved: bool
     user_intent: str | None
@@ -152,12 +157,40 @@ def create_initial_state(
         session_id=session_id,
         trace_id=None,
         tool_calls=[],
+        trajectory=[],
+        node_snapshots=[],
+        cited_sources=[],
+        replan_events=[],
+        evaluation_meta=None,
         needs_clarification=False,
         safety_approved=False,
         user_intent=None,
         qa_response=None,
         chitchat_response=None,
     )
+
+
+def _record_tool_call(
+    state: TravelState,
+    node: str,
+    tool_name: str,
+    arguments: dict[str, Any],
+    result: Any = None,
+    success: bool = True,
+    error: str | None = None,
+) -> None:
+    """统一记录真实工具调用，供 AgentWorld 和 DoVer 使用。"""
+    state.setdefault("tool_calls", []).append({
+        "node": node,
+        "tool_name": tool_name,
+        "arguments": arguments,
+        "input": arguments,
+        "result": result,
+        "output": result,
+        "success": success,
+        "error": error,
+        "timestamp": datetime.now().isoformat(),
+    })
 
 
 # ==================== 节点函数 ====================
@@ -466,25 +499,11 @@ async def destination_search(state: TravelState) -> TravelState:
         state["current_node"] = "destination_search"
         return state
 
-    # Step 1: 地理编码
-    try:
-        geo_result = await geocode_location.ainvoke({"query": destination})
-        if isinstance(geo_result, str):
-            geo_result = json.loads(geo_result)
-    except Exception as e:
-        state["risk_alerts"].append(f"地理编码失败: {str(e)}")
-        state["current_node"] = "destination_search"
-        return state
-
-    if not geo_result.get("success"):
-        state["risk_alerts"].append(f"无法找到目的地'{destination}'的坐标")
-        state["current_node"] = "destination_search"
-        return state
-
-    lat = geo_result["lat"]
-    lon = geo_result["lon"]
-
-    # Step 2: 基于兴趣搜索 POI
+    # Step 1: 先搜索攻略并抽取景点。这里不能先做目的地地理编码，
+    # 否则高德地理编码失败会把小红书搜索整条链路提前截断。
+    lat: float | None = None
+    lon: float | None = None
+    # Step 2: 小红书结果中的景点名会在 search_guide_pois 内部交给高德逐个校验。
     interests = pref_dict.get("interests") or ["interesting_places"]
 
     # 兴趣到 OpenTripMap kinds 的映射
@@ -549,11 +568,19 @@ async def destination_search(state: TravelState) -> TravelState:
         if guide_result.get("error"):
             state["risk_alerts"].append(str(guide_result["error"]))
         state["tool_calls"].append({
+            "node": "destination_search",
             "tool_name": "guide_search",
             "input": {"destination": destination, "interests": interests},
             "output": {
                 "enabled": guide_result.get("enabled"),
                 "cached": guide_result.get("cached"),
+                "keyword": guide_result.get("keyword"),
+                "endpoint": guide_result.get("endpoint"),
+                "http_status": guide_result.get("http_status"),
+                "api_code": guide_result.get("api_code"),
+                "request_id": guide_result.get("request_id"),
+                "attempts": guide_result.get("attempts", 0),
+                "note_count": guide_result.get("note_count", 0),
                 "candidate_count": guide_result.get("candidate_count", 0),
                 "poi_count": len(guide_result.get("poi_list") or []),
                 "error": guide_result.get("error"),
@@ -562,6 +589,40 @@ async def destination_search(state: TravelState) -> TravelState:
         })
     except Exception as e:
         state["risk_alerts"].append(f"攻略搜索增强失败: {str(e)}")
+
+    # Step 3: 获取城市中心坐标，仅用于后续高德周边搜索和距离过滤。
+    try:
+        geo_result = await geocode_location.ainvoke({"query": destination})
+        if isinstance(geo_result, str):
+            geo_result = json.loads(geo_result)
+        _record_tool_call(
+            state, "destination_search", "geocode_location", {"query": destination}, geo_result,
+            bool(isinstance(geo_result, dict) and geo_result.get("success")),
+        )
+        if isinstance(geo_result, dict) and geo_result.get("success"):
+            lat = geo_result.get("lat")
+            lon = geo_result.get("lon")
+        else:
+            state["risk_alerts"].append(f"无法找到目的地'{destination}'的坐标")
+    except Exception as e:
+        _record_tool_call(state, "destination_search", "geocode_location", {"query": destination}, None, False, str(e))
+        state["risk_alerts"].append(f"地理编码失败: {str(e)}")
+
+    # 目的地坐标缺失时，小红书候选仍然可能已经经过“地点名 + 城市”的高德
+    # 地理编码校验；此时保留这些候选，地图搜索和路线规划则交给后续节点处理。
+    if lat is None or lon is None:
+        state["poi_list"] = all_pois[:20]
+        state["current_node"] = "destination_search"
+        _record_tool_call(
+            state,
+            "destination_search",
+            "destination_search",
+            {"destination": destination, "interests": interests},
+            {"poi_count": len(state["poi_list"]), "map_search_skipped": True},
+            bool(state["poi_list"]),
+            "目的地中心坐标不可用，未执行按中心点的地图 POI 搜索" if not state["poi_list"] else None,
+        )
+        return state
 
     search_kinds = set()
     for interest in interests:
@@ -582,10 +643,27 @@ async def destination_search(state: TravelState) -> TravelState:
             })
             if isinstance(places, str):
                 places = json.loads(places)
+            _record_tool_call(
+                state,
+                "destination_search",
+                "search_places",
+                {"lat": lat, "lon": lon, "radius": 10000, "kinds": kind, "rate": "3"},
+                places,
+                True,
+            )
 
             for p in places or []:
                 _add_poi(p)
         except Exception as e:
+            _record_tool_call(
+                state,
+                "destination_search",
+                "search_places",
+                {"lat": lat, "lon": lon, "radius": 10000, "kinds": kind, "rate": "3"},
+                None,
+                False,
+                str(e),
+            )
             state["risk_alerts"].append(f"搜索 {kind} 失败: {str(e)}")
             continue
 
@@ -595,6 +673,7 @@ async def destination_search(state: TravelState) -> TravelState:
 
     # 记录工具调用
     state["tool_calls"].append({
+        "node": "destination_search",
         "tool_name": "destination_search",
         "input": {"destination": destination, "interests": interests},
         "output": {"poi_count": len(all_pois)},
@@ -651,12 +730,46 @@ async def route_planner(state: TravelState) -> TravelState:
                     "end_lat": coords_j.get("lat", 0),
                     "end_lon": coords_j.get("lon", 0),
                     "profile": profile,
+                    # 距离矩阵是 N² 次调用，只取距离和时长；真实道路几何在
+                    # 排序完成后，仅为最终相邻路段请求。
+                    "include_geometry": False,
                 })
                 if isinstance(route_result, str):
                     route_result = json.loads(route_result)
+                _record_tool_call(
+                    state,
+                    "route_planner",
+                    "estimate_route",
+                    {
+                        "start_lat": coords_i.get("lat", 0),
+                        "start_lon": coords_i.get("lon", 0),
+                        "end_lat": coords_j.get("lat", 0),
+                        "end_lon": coords_j.get("lon", 0),
+                        "profile": profile,
+                        "include_geometry": False,
+                    },
+                    route_result,
+                    True,
+                )
 
                 distance_matrix[(i, j)] = route_result
             except Exception:
+                _record_tool_call(
+                    state,
+                    "route_planner",
+                    "estimate_route",
+                    {
+                        "start_lat": coords_i.get("lat", 0),
+                        "start_lon": coords_i.get("lon", 0),
+                        "end_lat": coords_j.get("lat", 0),
+                        "end_lon": coords_j.get("lon", 0),
+                        "profile": profile,
+                        "include_geometry": False,
+                    },
+                    None,
+                    False,
+                    "路线工具失败，使用直线距离兜底",
+                )
                 # 使用直线距离作为兜底
                 from agent.tools import _haversine_distance
                 ci = pois[i].get("coordinates", {})
@@ -681,6 +794,42 @@ async def route_planner(state: TravelState) -> TravelState:
         i, j = sorted_indices[idx], sorted_indices[idx + 1]
         key = (min(i, j), max(i, j))
         route_data = distance_matrix.get(key, {})
+
+        # 按最终行程方向重新请求这一段，补齐可直接绘制的高德道路坐标。
+        coords_i = pois[i].get("coordinates", {})
+        coords_j = pois[j].get("coordinates", {})
+        geometry_input = {
+            "start_lat": coords_i.get("lat", 0),
+            "start_lon": coords_i.get("lon", 0),
+            "end_lat": coords_j.get("lat", 0),
+            "end_lon": coords_j.get("lon", 0),
+            "profile": profile,
+            "include_geometry": True,
+        }
+        try:
+            geometry_result = await estimate_route.ainvoke(geometry_input)
+            if isinstance(geometry_result, str):
+                geometry_result = json.loads(geometry_result)
+            if isinstance(geometry_result, dict):
+                route_data = geometry_result
+            _record_tool_call(
+                state,
+                "route_planner",
+                "estimate_route_geometry",
+                geometry_input,
+                geometry_result,
+                isinstance(geometry_result, dict),
+            )
+        except Exception as exc:
+            _record_tool_call(
+                state,
+                "route_planner",
+                "estimate_route_geometry",
+                geometry_input,
+                None,
+                False,
+                str(exc),
+            )
 
         segment = {
             "from_poi": pois[i].get("name", f"POI_{i}"),
@@ -770,7 +919,24 @@ async def weather_advisor(state: TravelState) -> TravelState:
         })
         if isinstance(weather_data, str):
             weather_data = json.loads(weather_data)
+        _record_tool_call(
+            state,
+            "weather_advisor",
+            "get_weather",
+            {"lat": center_lat, "lon": center_lon, "days": min(duration, 14)},
+            weather_data,
+            True,
+        )
     except Exception as e:
+        _record_tool_call(
+            state,
+            "weather_advisor",
+            "get_weather",
+            {"lat": center_lat, "lon": center_lon, "days": min(duration, 14)},
+            None,
+            False,
+            str(e),
+        )
         state["risk_alerts"].append(f"天气查询失败: {str(e)}")
         state["weather"] = []
         state["current_node"] = "weather_advisor"
@@ -863,8 +1029,10 @@ async def budget_estimator(state: TravelState) -> TravelState:
 
     # 记录工具调用
     state["tool_calls"].append({
+        "node": "budget_estimator",
         "tool_name": "estimate_budget",
-        "input": {"destination": destination, "duration_days": duration},
+        "arguments": {"destination": destination, "duration_days": duration, "travelers": travelers, "style": mapped_style},
+        "input": {"destination": destination, "duration_days": duration, "travelers": travelers, "style": mapped_style},
         "output": budget_result,
         "timestamp": datetime.now().isoformat(),
     })

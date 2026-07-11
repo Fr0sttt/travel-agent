@@ -27,6 +27,19 @@ current_trace_id: ContextVar[str | None] = ContextVar("trace_id", default=None)
 current_span_id: ContextVar[str | None] = ContextVar("span_id", default=None)
 
 
+def _compact(value: Any, limit: int = 4000) -> Any:
+    """限制埋点载荷大小，避免发送整段上下文和大结果。"""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        if isinstance(value, str) and len(value) > limit:
+            return value[:limit] + "...[截断]"
+        return value
+    if isinstance(value, dict):
+        return {str(k): _compact(v, limit) for k, v in list(value.items())[:80]}
+    if isinstance(value, (list, tuple)):
+        return [_compact(v, limit) for v in list(value)[:50]]
+    return _compact(str(value), limit)
+
+
 def get_current_trace_id() -> str | None:
     """获取当前 Trace ID"""
     return current_trace_id.get()
@@ -45,6 +58,12 @@ def set_trace_id(trace_id: str) -> None:
 def set_span_id(span_id: str) -> None:
     """设置当前 Span ID"""
     current_span_id.set(span_id)
+
+
+def clear_trace_context() -> None:
+    """清理当前协程的 Trace 上下文，避免串到下一次请求。"""
+    current_trace_id.set(None)
+    current_span_id.set(None)
 
 
 class LangfuseClient:
@@ -307,6 +326,44 @@ class LangfuseClient:
         except Exception:
             pass
 
+    def log_node_execution(
+        self,
+        trace_id: str | None,
+        node_name: str,
+        input_snapshot: dict[str, Any] | None,
+        output_snapshot: dict[str, Any] | None,
+        duration_ms: float,
+        success: bool = True,
+        error: str | None = None,
+    ) -> str | None:
+        """记录一个完整的 LangGraph 节点执行观测。"""
+        if not self.is_enabled or not trace_id:
+            return None
+        try:
+            span = self._langfuse.span(
+                trace_id=trace_id,
+                name=node_name,
+                input=_compact(input_snapshot or {}),
+                output=_compact(output_snapshot or {}),
+                metadata={
+                    "node_name": node_name,
+                    "duration_ms": round(duration_ms, 2),
+                    "success": success,
+                    "error": error,
+                },
+            )
+            span.end(
+                output=_compact(output_snapshot or {}),
+                metadata={
+                    "duration_ms": round(duration_ms, 2),
+                    "success": success,
+                    "error": error,
+                },
+            )
+            return span.id
+        except Exception:
+            return None
+
     def add_score(
         self,
         trace_id: str | None,
@@ -358,8 +415,20 @@ class LangfuseClient:
             final_output: 最终输出
             status: 状态
         """
-        # Langfuse 自动处理 trace 结束
-        pass
+        if not self.is_enabled or not trace_id:
+            clear_trace_context()
+            return
+        try:
+            trace = self._langfuse.trace(id=trace_id)
+            trace.update(
+                output=_compact(final_output or ""),
+                metadata={"status": status, "ended_at": datetime.now().isoformat()},
+            )
+            self._langfuse.flush()
+        except Exception:
+            pass
+        finally:
+            clear_trace_context()
 
 
 # 全局客户端实例（单例）

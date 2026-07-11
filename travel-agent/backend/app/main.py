@@ -32,6 +32,8 @@ from agent.graph import build_travel_graph
 from agent.tools import TOOLS, get_tools
 from agent.mcp_bridge import close_mcp_bridge, get_mcp_health_text
 from agent.travel_agent import TravelAgent
+from evaluation.evaluation_service import EvaluationService
+from observability.langfuse_client import get_langfuse
 from config import settings
 from memory.memory_manager import MemoryManager
 from infrastructure.remote_middleware_tunnel import RemoteMiddlewareTunnels, _TunnelSpec
@@ -233,7 +235,40 @@ async def lifespan(app: FastAPI):
     async with AsyncPostgresSaver.from_conn_string(pg_conn_str) as checkpointer:
         await checkpointer.setup()  # 幂等，首次建表，之后调用不会重复建
         graph = build_travel_graph(checkpointer=checkpointer)
-        app.state.agent = TravelAgent(graph=graph, memory_manager=memory_manager)
+        async def persist_evaluation_status(job: dict[str, Any]) -> None:
+            """把异步评测状态同步回 LangGraph checkpoint，前端读取会话即可看到最新状态。"""
+            report = job.get("report") if isinstance(job.get("report"), dict) else {}
+            metadata: dict[str, Any] = {
+                "run_id": job.get("run_id"),
+                "status": job.get("status"),
+                "created_at": job.get("created_at"),
+                "started_at": job.get("started_at"),
+                "finished_at": job.get("finished_at"),
+            }
+            if report:
+                metadata["overall_score"] = report.get("overall_score")
+                metadata["dimension_scores"] = report.get("dimension_scores", {})
+            if job.get("error"):
+                metadata["error"] = job.get("error")
+            try:
+                await graph.aupdate_state(
+                    {"configurable": {"thread_id": str(job.get("session_id"))}},
+                    {"evaluation_meta": metadata},
+                )
+            except Exception as exc:
+                print(
+                    f"[startup] persist evaluation status failed run_id={job.get('run_id')}: {exc}",
+                    flush=True,
+                )
+
+        evaluation_service = EvaluationService(status_callback=persist_evaluation_status)
+        app.state.evaluation_service = evaluation_service
+        app.state.agent = TravelAgent(
+            graph=graph,
+            memory_manager=memory_manager,
+            langfuse_client=get_langfuse(),
+            evaluation_service=evaluation_service,
+        )
         print("[startup] agent ready (with checkpointer)", flush=True)
         app.state.start_time = asyncio.get_event_loop().time()
 
@@ -245,6 +280,9 @@ async def lifespan(app: FastAPI):
             del app.state.agent
         if hasattr(app.state, "memory_manager"):
             del app.state.memory_manager
+        if hasattr(app.state, "evaluation_service"):
+            await app.state.evaluation_service.shutdown()
+            del app.state.evaluation_service
         if hasattr(app.state, "tunnel_manager"):
             app.state.tunnel_manager.close()
             del app.state.tunnel_manager
@@ -298,6 +336,11 @@ def get_agent(request: Request) -> TravelAgent:
 def get_memory_manager(request: Request) -> MemoryManager:
     """获取记忆管理器实例。"""
     return request.app.state.memory_manager
+
+
+def get_evaluation_service(request: Request) -> EvaluationService:
+    """获取异步评测服务。"""
+    return request.app.state.evaluation_service
 
 
 # ==================== 健康检查 ====================
@@ -520,6 +563,7 @@ async def get_session_state(
     session_id: str,
     agent: TravelAgent = Depends(get_agent),
     memory_manager: MemoryManager = Depends(get_memory_manager),
+    evaluation_service: EvaluationService = Depends(get_evaluation_service),
 ) -> JSONResponse:
     """
     获取会话完整状态
@@ -544,6 +588,9 @@ async def get_session_state(
 
     # 确保内容可 JSON 序列化，并补上最近消息，方便前端恢复聊天窗口
     serializable_state = json.loads(json.dumps(state, default=str))
+    latest_evaluation = evaluation_service.get_latest_for_session(session_id)
+    if latest_evaluation:
+        serializable_state["evaluation"] = latest_evaluation
     if not serializable_state.get("messages"):
         serializable_state["messages"] = memory_manager.get_recent_session_history(
             session_id,
@@ -562,6 +609,30 @@ async def list_sessions(
         "count": len(sessions),
         "sessions": sessions,
     }
+
+
+@app.get("/api/evaluations/{run_id}", tags=["评测"])
+async def get_evaluation(
+    run_id: str,
+    evaluation_service: EvaluationService = Depends(get_evaluation_service),
+) -> dict[str, Any]:
+    """查询一次异步评测的状态和结果。"""
+    job = evaluation_service.get(run_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"评测任务 {run_id} 不存在")
+    return job
+
+
+@app.get("/api/session/{session_id}/evaluation", tags=["评测"])
+async def get_session_evaluation(
+    session_id: str,
+    evaluation_service: EvaluationService = Depends(get_evaluation_service),
+) -> dict[str, Any]:
+    """查询会话最近一次评测。"""
+    job = evaluation_service.get_latest_for_session(session_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"会话 {session_id} 暂无评测")
+    return job
 
 
 @app.delete("/api/sessions/{session_id}", tags=["行程规划"])
