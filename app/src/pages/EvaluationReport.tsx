@@ -171,6 +171,9 @@ function JudgeEvidence({ result }: { result: EvaluationResult }) {
         const evidence = Array.isArray(judge.evidence) ? judge.evidence : [];
         const failedChecks = Array.isArray(judge.failed_checks) ? judge.failed_checks : [];
         const score = judge.score === null || judge.score === undefined ? null : scorePercent(judge.score);
+        const judgeReason = judge.status === 'unavailable'
+          ? 'Judge 没有返回符合结构化输出契约的结果，本次不使用该 Judge 分数。'
+          : String(judge.reason || '未返回文字化判定原因。');
         return (
           <div key={name} className="rounded-lg border border-white/[0.08] bg-white/[0.025] p-4">
             <div className="flex flex-wrap items-center gap-2">
@@ -180,7 +183,7 @@ function JudgeEvidence({ result }: { result: EvaluationResult }) {
               </span>
               {score !== null && <span className="ml-auto font-mono text-sm text-[#8ECAE6]">{score}%</span>}
             </div>
-            <p className="mt-3 text-sm leading-6 text-white/65">{String(judge.reason || '未返回文字化判定原因。')}</p>
+            <p className="mt-3 text-sm leading-6 text-white/65">{judgeReason}</p>
             {Boolean(judge.failure_category) && (
               <div className="mt-3 flex items-start gap-2 rounded-md bg-[#EF476F]/10 px-3 py-2 text-xs text-[#FF9FB2]">
                 <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
@@ -208,6 +211,31 @@ function JudgeEvidence({ result }: { result: EvaluationResult }) {
   );
 }
 
+const MILESTONE_LABELS: Record<string, string> = {
+  preference_collector: '收集用户偏好',
+  constraint_normalizer: '归一化旅行约束',
+  geocode_location: '地理编码目的地',
+  search_places: '搜索候选地点',
+  estimate_route: '估算地点间路线',
+  get_weather: '查询天气预报',
+  estimate_budget: '估算旅行预算',
+  itinerary_synthesizer: '合成每日行程',
+  safety_reviewer: '安全审查',
+  output_formatter: '格式化最终输出',
+};
+
+function explainHardFailure(value: string): string {
+  if (value.startsWith('missing_milestones:')) {
+    const names = value.slice('missing_milestones:'.length).split(',').filter(Boolean);
+    const labels = names.map((name) => MILESTONE_LABELS[name] || name);
+    return `执行链路缺少可观测步骤：${labels.join('、')}`;
+  }
+  if (value === 'failure_without_root_cause') return '发现失败事件，但没有记录可定位的根因。';
+  if (value === 'citation_judge_unavailable') return '引用 Judge 不可用，来源可信度没有完成语义校验。';
+  if (value === 'no_citation_support') return '行程事实没有找到对应的结构化来源证据。';
+  return value;
+}
+
 function RuleChecks({ result }: { result: EvaluationResult }) {
   const details = asRecord(result.details);
   const checks = [
@@ -217,11 +245,12 @@ function RuleChecks({ result }: { result: EvaluationResult }) {
   const unique = [...new Set(checks)];
   return (
     <div className="rounded-lg border border-white/[0.08] bg-white/[0.025] p-4">
-      <div className="flex items-center gap-2 text-sm font-medium text-white"><ShieldAlert className="h-4 w-4 text-[#FFD166]" />硬规则校验</div>
+      <div className="flex items-center gap-2 text-sm font-medium text-white"><ShieldAlert className="h-4 w-4 text-[#FFD166]" />执行链路硬校验</div>
+      <p className="mt-2 text-xs leading-5 text-white/45">这里检查的是 Agent 是否留下必要的节点和工具调用证据，不是对预算、天数等用户约束的重复评分。</p>
       {unique.length === 0 ? (
         <div className="mt-3 flex items-center gap-2 text-sm text-[#06D6A0]"><CheckCircle2 className="h-4 w-4" />本次没有发现硬规则失败项</div>
       ) : (
-        <div className="mt-3 space-y-2">{unique.map((item) => <div key={item} className="flex items-start gap-2 text-sm text-[#FF9FB2]"><XCircle className="mt-0.5 h-4 w-4 shrink-0" />{item}</div>)}</div>
+        <div className="mt-3 space-y-2">{unique.map((item) => <div key={item} className="flex items-start gap-2 text-sm text-[#FF9FB2]"><XCircle className="mt-0.5 h-4 w-4 shrink-0" />{explainHardFailure(item)}</div>)}</div>
       )}
     </div>
   );

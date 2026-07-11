@@ -369,6 +369,48 @@ class EvaluationRunner:
     # ------------------------------------------------------------------
     #  内部辅助方法
     # ------------------------------------------------------------------
+    @staticmethod
+    def _normalize_reasoning_trajectory(session_data: dict[str, Any]) -> list[dict[str, Any]]:
+        """补齐 DoVer 所需的工具事件，避免把已成功调用误判为缺失里程碑。"""
+        trajectory = [
+            item for item in (session_data.get("trajectory") or [])
+            if isinstance(item, dict)
+        ]
+        tool_calls = [
+            item for item in (session_data.get("tool_calls") or [])
+            if isinstance(item, dict) and item.get("tool_name")
+        ]
+
+        existing = {
+            (
+                item.get("tool_name"),
+                item.get("node"),
+                item.get("timestamp"),
+            )
+            for item in trajectory
+            if item.get("type") == "tool_call"
+        }
+        for call in tool_calls:
+            fingerprint = (
+                call.get("tool_name"),
+                call.get("node"),
+                call.get("timestamp"),
+            )
+            if fingerprint in existing:
+                continue
+            trajectory.append({
+                "type": "tool_call",
+                "node": call.get("node", ""),
+                "tool_name": call.get("tool_name", ""),
+                "arguments": call.get("arguments") or call.get("input") or {},
+                "result": call.get("result") or call.get("output"),
+                "success": call.get("success", True),
+                "error": call.get("error"),
+                "timestamp": call.get("timestamp"),
+            })
+            existing.add(fingerprint)
+        return trajectory
+
     async def _run_evaluator(
         self,
         eval_type: str,
@@ -424,7 +466,9 @@ class EvaluationRunner:
                     ),
                 },
                 output_data={
-                    "trajectory": session_data.get("trajectory", []),
+                    # DoVer 既需要节点事件，也需要工具事件。部分旧轨迹只保存了
+                    # 节点快照，因此这里用同一份 tool_calls 补齐可审计轨迹。
+                    "trajectory": self._normalize_reasoning_trajectory(session_data),
                 },
                 context={
                     "interventions": session_data.get("interventions", []),
