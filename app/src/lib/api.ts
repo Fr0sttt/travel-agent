@@ -59,6 +59,7 @@ export interface EvaluationResult {
   passed: boolean;
   judge?: Record<string, unknown> | null;
   hard_failures?: string[];
+  [key: string]: unknown;
 }
 
 export interface EvaluationReport {
