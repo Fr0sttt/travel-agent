@@ -44,7 +44,42 @@ export interface SessionState {
   tool_calls?: Array<Record<string, unknown>>;
   messages?: Array<{ role: string; content: string; node?: string; timestamp?: string }>;
   needs_clarification?: boolean;
+  trace_id?: string | null;
+  trajectory?: Array<Record<string, unknown>>;
+  node_snapshots?: Array<Record<string, unknown>>;
+  evaluation?: EvaluationJob | null;
   [key: string]: unknown;
+}
+
+export interface EvaluationResult {
+  metric_name: string;
+  score: number;
+  details: Record<string, unknown>;
+  reasoning: string;
+  passed: boolean;
+  judge?: Record<string, unknown> | null;
+  hard_failures?: string[];
+}
+
+export interface EvaluationReport {
+  run_id?: string;
+  session_id: string;
+  trace_id?: string | null;
+  overall_score: number;
+  dimension_scores: Record<string, number>;
+  results: EvaluationResult[];
+  recommendations: string[];
+  timestamp: string;
+}
+
+export interface EvaluationJob {
+  run_id: string;
+  session_id: string;
+  trace_id?: string | null;
+  status: 'queued' | 'running' | 'completed' | 'failed';
+  created_at: string;
+  report?: EvaluationReport;
+  error?: string;
 }
 
 export interface SessionSummary {
@@ -188,6 +223,14 @@ export async function getSession(sessionId: string): Promise<SessionState> {
   }
 
   return (await response.json()) as SessionState;
+}
+
+export async function getEvaluation(runId: string): Promise<EvaluationJob> {
+  const response = await fetch(buildUrl(`/api/evaluations/${runId}`), {
+    headers: buildHeaders({ Accept: 'application/json' }),
+  });
+  if (!response.ok) throw new Error(`获取评测结果失败：${response.status}`);
+  return response.json() as Promise<EvaluationJob>;
 }
 
 export async function listSessions(): Promise<{ count: number; sessions: SessionSummary[] }> {

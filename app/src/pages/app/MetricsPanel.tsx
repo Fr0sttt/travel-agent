@@ -144,6 +144,16 @@ function MetricBar({ metric, index }: { metric: Metric; index: number }) {
               <p className="text-xs leading-relaxed mb-2" style={{ color: 'rgba(255,255,255,0.5)', fontFamily: "'Inter Variable', Inter, sans-serif" }}>
                 {metric.description}
               </p>
+              {metric.hardFailures && metric.hardFailures.length > 0 && (
+                <div className="mb-2 text-[11px] text-[#EF476F]">
+                  硬规则：{metric.hardFailures.join('、')}
+                </div>
+              )}
+              {metric.judgeReason && (
+                <div className="mb-2 text-[11px] leading-relaxed text-[rgba(255,255,255,0.42)]">
+                  Judge：{metric.judgeReason}
+                </div>
+              )}
               <button className="text-[11px] transition-colors hover:underline" style={{ color: '#8ECAE6' }}>
                 点击查看改进建议
               </button>
@@ -156,8 +166,10 @@ function MetricBar({ metric, index }: { metric: Metric; index: number }) {
 }
 
 export default function MetricsPanel() {
-  const { dashboardData } = useTravel();
+  const { dashboardData, sessionState } = useTravel();
   const { metrics, overallScore } = dashboardData;
+  const evaluation = sessionState?.evaluation;
+  const isRealEvaluation = evaluation?.status === 'completed' && Boolean(evaluation.report);
 
   return (
     <div className="h-full flex flex-col">
@@ -168,6 +180,12 @@ export default function MetricsPanel() {
           实时评估
         </span>
       </div>
+
+      {evaluation?.run_id && (
+        <div className="px-4 py-2 border-b border-white/[0.04] text-[9px] text-[rgba(255,255,255,0.28)] font-mono">
+          {isRealEvaluation ? '真实评测完成' : `评测${evaluation.status}`} · {evaluation.run_id}
+        </div>
+      )}
 
       {/* Individual Metrics */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">

@@ -119,6 +119,20 @@ export function TravelProvider({ children }: { children: React.ReactNode }) {
     );
   }, []);
 
+  const pollEvaluation = useCallback(async (targetSessionId: string) => {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, attempt === 0 ? 300 : 1000));
+      try {
+        const latestState = await getSession(targetSessionId);
+        setSessionState(latestState);
+        const status = latestState.evaluation?.status;
+        if (status === 'completed' || status === 'failed') return;
+      } catch {
+        return;
+      }
+    }
+  }, []);
+
   const appendAssistantMessage = useCallback((content: string, isStreaming = true) => {
     const id = generateId();
     assistantMessageIdRef.current = id;
@@ -290,6 +304,9 @@ export function TravelProvider({ children }: { children: React.ReactNode }) {
         try {
           const state = await getSession(event.session_id);
           setSessionState(state);
+          if (state.evaluation?.run_id) {
+            void pollEvaluation(event.session_id);
+          }
           const toolCalls = Array.isArray(state.tool_calls) ? state.tool_calls : [];
           if (toolCalls.length > 0) {
             updateAssistantMessage((msg) => ({
@@ -317,7 +334,7 @@ export function TravelProvider({ children }: { children: React.ReactNode }) {
         break;
       }
     }
-  }, [updateAssistantMessage, refreshSessions]);
+  }, [updateAssistantMessage, refreshSessions, pollEvaluation]);
 
   const sendMessage = useCallback(
     async (text: string) => {

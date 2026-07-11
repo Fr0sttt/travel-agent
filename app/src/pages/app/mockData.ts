@@ -72,6 +72,8 @@ export interface Metric {
   score: number;
   color: string;
   description: string;
+  hardFailures?: string[];
+  judgeReason?: string;
 }
 
 export interface MemoryItem {

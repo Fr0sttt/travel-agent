@@ -271,7 +271,41 @@ export function buildDashboardData(state: SessionState): DashboardData {
     },
   ];
 
-  const overallScore = Math.round(metrics.reduce((sum, m) => sum + m.score, 0) / metrics.length);
+  // 评测任务完成后优先展示后端真实评测结果，未完成时才展示过程指标。
+  const evaluation = state.evaluation as Record<string, unknown> | null | undefined;
+  const report = evaluation?.status === 'completed'
+    ? (evaluation.report as Record<string, unknown> | undefined)
+    : undefined;
+  const evaluationResults = Array.isArray(report?.results) ? report.results as Array<Record<string, unknown>> : [];
+  const evaluationLabels: Record<string, { label: string; icon: string }> = {
+    RACE_end_to_end: { label: 'RACE 端到端质量', icon: 'Target' },
+    DoVer_reasoning: { label: 'DoVer 执行推理', icon: 'Route' },
+    AgentWorld_tool: { label: 'AgentWorld 工具链', icon: 'BookOpen' },
+    FACT_rag: { label: 'FACT 来源可信度', icon: 'AlertTriangle' },
+    comprehensive_metrics: { label: '旅行综合指标', icon: 'ShieldCheck' },
+  };
+  const evaluatedMetrics: Metric[] = evaluationResults.map((result, index) => {
+    const meta = evaluationLabels[String(result.metric_name)] || { label: String(result.metric_name), icon: 'Target' };
+    const score = Math.round(Number(result.score || 0) * 100);
+    const hardFailures = Array.isArray(result.hard_failures) ? result.hard_failures.map(String) : [];
+    const judge = (result.judge || {}) as Record<string, unknown>;
+    return {
+      id: `eval-${index}`,
+      label: meta.label,
+      icon: meta.icon,
+      score,
+      color: result.passed ? '#06D6A0' : '#EF476F',
+      description: hardFailures.length > 0
+        ? `硬规则未通过：${hardFailures.join('、')}`
+        : String(judge.reason || result.reasoning || '该维度已完成评测。'),
+      hardFailures,
+      judgeReason: String(judge.reason || result.reasoning || ''),
+    };
+  });
+  const displayMetrics = evaluatedMetrics.length > 0 ? evaluatedMetrics : metrics;
+  const overallScore = report && typeof report.overall_score === 'number'
+    ? Math.round(report.overall_score * 100)
+    : Math.round(displayMetrics.reduce((sum, m) => sum + m.score, 0) / displayMetrics.length);
 
   // Memory
   const memoryItems: MemoryItem[] = [];
@@ -383,7 +417,7 @@ export function buildDashboardData(state: SessionState): DashboardData {
     pois,
     timelineDays,
     calendarEvents,
-    metrics,
+    metrics: displayMetrics,
     overallScore,
     memoryItems,
     safetyEvents,

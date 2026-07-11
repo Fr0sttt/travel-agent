@@ -10,9 +10,10 @@ import MetricsPanel from './app/MetricsPanel';
 import ToolCallsPanel from './app/ToolCallsPanel';
 import MemoryPanel from './app/MemoryPanel';
 import SafetyPanel from './app/SafetyPanel';
+import TracePanel from './app/TracePanel';
 
 type CenterTab = 'map' | 'timeline' | 'calendar';
-type RightTab = 'metrics' | 'tools' | 'memory' | 'safety';
+type RightTab = 'metrics' | 'trace' | 'tools' | 'memory' | 'safety';
 type BottomTab = 'log' | 'stream';
 
 const centerTabs: { id: CenterTab; label: string; icon: React.ElementType }[] = [
@@ -23,6 +24,7 @@ const centerTabs: { id: CenterTab; label: string; icon: React.ElementType }[] = 
 
 const rightTabs: { id: RightTab; label: string; icon: React.ElementType }[] = [
   { id: 'metrics', label: '指标', icon: BarChart3 },
+  { id: 'trace', label: '链路', icon: Activity },
   { id: 'tools', label: '工具', icon: Terminal },
   { id: 'memory', label: '记忆', icon: Brain },
   { id: 'safety', label: '安全', icon: Shield },
@@ -53,6 +55,8 @@ export default function AppDashboard() {
     switch (rightTab) {
       case 'metrics':
         return <MetricsPanel />;
+      case 'trace':
+        return <TracePanel />;
       case 'tools':
         return <ToolCallsPanel />;
       case 'memory':
