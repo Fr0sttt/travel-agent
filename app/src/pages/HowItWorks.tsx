@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { isValidElement, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Download, Eye, FileEdit, FileText, Loader2, LockKeyhole, RotateCcw, X } from 'lucide-react'
@@ -11,11 +11,63 @@ type HeadingItem = {
 const markdownUrl = `${import.meta.env.BASE_URL}how-it-works.md`
 const editPasswordHash = import.meta.env.VITE_HOW_IT_WORKS_EDIT_PASSWORD_HASH
   || '35729e599293e76e7efe33ff652c6ba13cba1b40464fb509718a7cffb409b81d'
+let diagramSequence = 0
 
 async function sha256(value: string) {
   const data = new TextEncoder().encode(value)
   const digest = await crypto.subtle.digest('SHA-256', data)
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+function MermaidBlock({ chart }: { chart: string }) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const diagramId = useRef(`how-it-works-diagram-${++diagramSequence}`)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function renderDiagram() {
+      try {
+        setError('')
+        const { default: mermaid } = await import('mermaid')
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: 'strict',
+          theme: 'base',
+          themeVariables: {
+            primaryColor: '#F4F9FD',
+            primaryTextColor: '#0A2463',
+            primaryBorderColor: '#8ECAE6',
+            lineColor: '#5B7083',
+            secondaryColor: '#FFFFFF',
+            tertiaryColor: '#EDF6F9',
+            fontFamily: 'Inter, Noto Sans SC, sans-serif',
+          },
+        })
+        const { svg } = await mermaid.render(diagramId.current, chart)
+        if (!cancelled && containerRef.current) {
+          containerRef.current.innerHTML = svg
+        }
+      } catch {
+        if (!cancelled) {
+          setError('架构图渲染失败，请检查 Mermaid 语法')
+        }
+      }
+    }
+
+    void renderDiagram()
+    return () => {
+      cancelled = true
+    }
+  }, [chart])
+
+  return (
+    <div className="my-6 overflow-x-auto rounded-2xl border border-[#D7E7F3] bg-[#FBFDFF] p-4">
+      <div ref={containerRef} className="min-w-[720px] [&_svg]:mx-auto [&_svg]:max-w-full" />
+      {error && <p className="text-sm text-[#8B2E2E]">{error}</p>}
+    </div>
+  )
 }
 
 function slugifyHeading(text: string) {
@@ -187,12 +239,18 @@ export default function HowItWorks() {
         {children}
       </blockquote>
     ),
-    code: ({ children }: { children?: ReactNode }) => (
-      <code className="rounded bg-[#EEF5FB] px-1.5 py-0.5 font-mono text-[0.85em] text-[#0A2463]">{children}</code>
-    ),
-    pre: ({ children }: { children?: ReactNode }) => (
-      <pre className="overflow-x-auto rounded-xl bg-[#0B1F33] p-4 text-sm leading-7 text-white mb-4">{children}</pre>
-    ),
+    code: ({ children, className }: { children?: ReactNode; className?: string }) => {
+      if (className?.includes('language-mermaid')) {
+        return <MermaidBlock chart={String(children).replace(/\n$/, '')} />
+      }
+      return <code className="rounded bg-[#EEF5FB] px-1.5 py-0.5 font-mono text-[0.85em] text-[#0A2463]">{children}</code>
+    },
+    pre: ({ children }: { children?: ReactNode }) => {
+      if (isValidElement(children) && children.type === MermaidBlock) {
+        return children
+      }
+      return <pre className="overflow-x-auto rounded-xl bg-[#0B1F33] p-4 text-sm leading-7 text-white mb-4">{children}</pre>
+    },
     table: ({ children }: { children?: ReactNode }) => (
       <div className="overflow-x-auto mb-4">
         <table className="w-full border-collapse text-sm text-[#27415C]">{children}</table>
@@ -227,7 +285,7 @@ export default function HowItWorks() {
                 WanderMind 旅行代理项目技术文档
               </h1>
               <p className="text-base leading-8 max-w-3xl" style={{ color: 'rgba(10,36,99,0.78)', fontFamily: "'Inter Variable', Inter, sans-serif" }}>
-                面向学习和面试准备的项目技术说明，按架构、执行流程、记忆机制、安全设计与评测方法梳理 WanderMind 的核心实现。
+                按功能、架构、执行流程、数据来源与安全设计梳理 WanderMind 的核心实现。
               </p>
             </div>
 
