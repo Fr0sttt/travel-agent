@@ -8,7 +8,7 @@ import re
 import time
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 
 def _clip(value: Any, limit: int = 6000) -> Any:
@@ -40,13 +40,13 @@ class JudgeOutput(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    score: float | None = Field(default=None, ge=0.0, le=1.0)
-    label: Literal["pass", "soft_pass", "fail"] = "fail"
-    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
-    reason: str = ""
-    evidence: list[str] = Field(default_factory=list)
-    failure_category: str = ""
-    failed_checks: list[str] = Field(default_factory=list)
+    score: float = Field(..., ge=0.0, le=1.0)
+    label: Literal["pass", "soft_pass", "fail"] = Field(...)
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    reason: str = Field(..., min_length=1)
+    evidence: list[str] = Field(...)
+    failure_category: str = Field(...)
+    failed_checks: list[str] = Field(...)
 
 
 _JUDGE_JSON_SCHEMA: dict[str, Any] = {
@@ -82,6 +82,7 @@ def _extract_json_object(content: str) -> dict[str, Any]:
     text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE).strip()
     decoder = json.JSONDecoder()
     last_error: json.JSONDecodeError | None = None
+    first_object: dict[str, Any] | None = None
     start = 0
     while True:
         start = text.find("{", start)
@@ -90,10 +91,18 @@ def _extract_json_object(content: str) -> dict[str, Any]:
         try:
             result, _ = decoder.raw_decode(text[start:])
             if isinstance(result, dict):
-                return result
+                # 模型偶尔会复述输入 payload；优先选真正含有评分字段的对象。
+                if first_object is None:
+                    first_object = result
+                if "score" in result and any(
+                    key in result for key in ("label", "confidence", "reason")
+                ):
+                    return result
         except json.JSONDecodeError as exc:
             last_error = exc
         start += 1
+    if first_object is not None:
+        return first_object
     if last_error:
         raise ValueError(f"Judge 返回内容无法解析为 JSON: {last_error.msg}") from last_error
     # 不把模型的思考文本写入评测报告，避免内部推理内容泄漏到前端。
@@ -119,7 +128,34 @@ def _message_to_text(value: Any) -> str:
 
 def _validate_judge_output(value: dict[str, Any]) -> dict[str, Any]:
     """用同一份 Pydantic 契约校验三种传输模式的返回值。"""
-    result = JudgeOutput.model_validate(value).model_dump()
+    normalized = dict(value)
+    label_aliases = {
+        "success": "pass",
+        "passed": "pass",
+        "positive": "pass",
+        "通过": "pass",
+        "部分通过": "soft_pass",
+        "neutral": "soft_pass",
+        "failure": "fail",
+        "failed": "fail",
+        "negative": "fail",
+        "失败": "fail",
+    }
+    if isinstance(normalized.get("label"), str):
+        normalized["label"] = label_aliases.get(
+            normalized["label"].strip().lower(), normalized["label"].strip().lower()
+        )
+    if normalized.get("evidence") is None:
+        normalized["evidence"] = []
+    elif isinstance(normalized.get("evidence"), str):
+        normalized["evidence"] = [normalized["evidence"]]
+    if normalized.get("failed_checks") is None:
+        normalized["failed_checks"] = []
+    elif isinstance(normalized.get("failed_checks"), str):
+        normalized["failed_checks"] = [normalized["failed_checks"]]
+    if normalized.get("failure_category") is None:
+        normalized["failure_category"] = ""
+    result = JudgeOutput.model_validate(normalized).model_dump()
     result["evidence"] = result["evidence"][:5]
     result["failed_checks"] = result["failed_checks"][:10]
     return result
@@ -168,7 +204,7 @@ class TravelLLMJudge:
                 "evidence": _clip(evidence),
                 "rubric": rubric,
                 "output_schema": {
-                    "score": "0到1之间的小数",
+                    "score": "必须是0到1之间的小数，不能为null",
                     "label": "pass|soft_pass|fail",
                     "confidence": "0到1之间的小数",
                     "reason": "一句话说明判定原因",
@@ -180,6 +216,8 @@ class TravelLLMJudge:
             prompt = (
                 "你是旅行规划 Agent 的严格评测器。只能依据给定证据判定，不能补造事实。"
                 "先检查硬约束，再判断语义质量；硬约束失败时不得用文案质量抵消。"
+                "即使证据不足也必须给出0到1之间的数值分数，不能返回null。"
+                "不要复述输入 payload，不要输出 rubric_name、task、output_schema 等输入包装字段。"
                 "禁止输出思考过程、分析过程、<think>标签或 Markdown。只输出符合给定结构的合法 JSON。\n"
                 + json.dumps(payload, ensure_ascii=False)
             )
@@ -189,11 +227,22 @@ class TravelLLMJudge:
                 kwargs: dict[str, Any] = {
                     "model": self.model or settings.openai_model,
                     "messages": [
-                        {"role": "system", "content": "你是可审计的旅行 Agent 评测器。"},
+                        {
+                            "role": "system",
+                            "content": (
+                                "你是可审计的旅行 Agent 评测器。"
+                                "只输出评分结果 JSON，不复述输入，不输出思考过程。"
+                            ),
+                        },
                         {"role": "user", "content": prompt},
                     ],
                     "temperature": 0,
-                    "max_tokens": 700,
+                    # DeepSeek 思考模型会消耗一部分输出额度，700 容易只返回
+                    # reasoning_content 而没有最终 JSON，因此给 Judge 独立留出额度。
+                    "max_tokens": max(1600, min(settings.openai_max_tokens, 2400)),
+                    # DeepSeek v4 flash 的 thinking 模式会把最终答案留在
+                    # reasoning_content，关闭后才会稳定返回 content JSON。
+                    "extra_body": {"thinking": {"type": "disabled"}},
                 }
                 if mode == "json_schema":
                     kwargs["response_format"] = {
@@ -204,37 +253,27 @@ class TravelLLMJudge:
                             "schema": _JUDGE_JSON_SCHEMA,
                         },
                     }
-                elif mode == "json_object":
+                elif mode in ("json_object", "json_object_retry"):
                     kwargs["response_format"] = {"type": "json_object"}
                 return client.chat.completions.create(**kwargs)
 
             result: dict[str, Any] | None = None
             last_parse_error: Exception | None = None
             async with self._get_semaphore():
-                # 优先使用结构化输出；兼容不支持 JSON Schema/JSON mode 的中转站。
-                modes = ("json_schema", "json_object", "plain")
+                # 当前中转站不支持 JSON Schema，但支持 JSON Object；不再把普通
+                # 思考文本当作正式降级协议，避免“解析成功但不可审计”。
+                modes = ("json_schema", "json_object", "json_object_retry")
                 for attempt, mode in enumerate(modes):
                     try:
                         response = await asyncio.wait_for(
                             asyncio.to_thread(call, mode), timeout=self.timeout_seconds + 5
                         )
                         message = response.choices[0].message
-                        contents = []
-                        for field in ("content", "reasoning_content"):
-                            content = _message_to_text(getattr(message, field, None))
-                            if content and content not in contents:
-                                contents.append(content)
-                        if not contents:
+                        # reasoning_content 永远是内部思考，不参与评测结果解析。
+                        content = _message_to_text(getattr(message, "content", None))
+                        if not content:
                             raise ValueError("Judge 返回空内容")
-                        last_content_error: Exception | None = None
-                        for content in contents:
-                            try:
-                                result = _validate_judge_output(_extract_json_object(content))
-                                break
-                            except Exception as content_exc:
-                                last_content_error = content_exc
-                        if result is None:
-                            raise last_content_error or ValueError("Judge 未返回可解析结果")
+                        result = _validate_judge_output(_extract_json_object(content))
                         break
                     except Exception as exc:
                         # 结构化协议不被中转站支持时，继续尝试兼容模式。
@@ -244,6 +283,7 @@ class TravelLLMJudge:
             if result is None:
                 raise last_parse_error or ValueError("Judge 未返回可解析结果")
             result["status"] = "ok"
+            result["judge_transport"] = mode
             result["latency_ms"] = round((time.perf_counter() - started) * 1000, 2)
 
             if trace_id:
@@ -262,8 +302,9 @@ class TravelLLMJudge:
             return result
         except Exception as exc:
             # 前端只展示稳定的协议错误，不展示模型原始思考文本或响应片段。
-            if isinstance(exc, ValueError) and (
-                "JSON" in str(exc) or "结构化" in str(exc) or "空内容" in str(exc)
+            if isinstance(exc, ValidationError) or (
+                isinstance(exc, ValueError)
+                and ("JSON" in str(exc) or "结构化" in str(exc) or "空内容" in str(exc))
             ):
                 return _default_result(
                     "Judge 返回格式不符合结构化输出契约，已拒绝本次结果",
