@@ -1,4 +1,4 @@
-import { isValidElement, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Children, isValidElement, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Download, Eye, FileEdit, FileText, Loader2, LockKeyhole, RotateCcw, X } from 'lucide-react'
@@ -243,11 +243,19 @@ export default function HowItWorks() {
       if (className?.includes('language-mermaid')) {
         return <MermaidBlock chart={String(children).replace(/\n$/, '')} />
       }
-      return <code className="rounded bg-[#EEF5FB] px-1.5 py-0.5 font-mono text-[0.85em] text-[#0A2463]">{children}</code>
+      return <code className={`rounded bg-[#EEF5FB] px-1.5 py-0.5 font-mono text-[0.85em] text-[#0A2463] ${className ?? ''}`}>{children}</code>
     },
     pre: ({ children }: { children?: ReactNode }) => {
-      if (isValidElement(children) && children.type === MermaidBlock) {
-        return children
+      const child = Children.toArray(children)[0]
+      if (isValidElement(child)) {
+        if (child.type === MermaidBlock) {
+          return child
+        }
+
+        const childProps = child.props as { className?: string; children?: ReactNode }
+        if (childProps.className?.includes('language-mermaid')) {
+          return <MermaidBlock chart={String(childProps.children).replace(/\n$/, '')} />
+        }
       }
       return <pre className="overflow-x-auto rounded-xl bg-[#0B1F33] p-4 text-sm leading-7 text-white mb-4">{children}</pre>
     },
