@@ -51,6 +51,15 @@ export interface SessionState {
   [key: string]: unknown;
 }
 
+export interface SessionTraceData {
+  session: SessionState;
+  trace_id?: string | null;
+  langfuse?: {
+    trace?: Record<string, unknown> | null;
+    observations?: Array<Record<string, unknown>>;
+  } | null;
+}
+
 export interface EvaluationResult {
   metric_name: string;
   score: number;
@@ -224,6 +233,19 @@ export async function getSession(sessionId: string): Promise<SessionState> {
   }
 
   return (await response.json()) as SessionState;
+}
+
+export async function getSessionTrace(sessionId: string): Promise<SessionTraceData> {
+  const response = await fetch(buildUrl(`/api/session/${sessionId}/trace`), {
+    headers: buildHeaders({ Accept: 'application/json' }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => 'Unknown error');
+    throw new Error(`HTTP ${response.status}: ${text}`);
+  }
+
+  return (await response.json()) as SessionTraceData;
 }
 
 export async function getEvaluation(runId: string): Promise<EvaluationJob> {

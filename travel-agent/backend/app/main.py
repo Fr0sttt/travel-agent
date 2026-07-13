@@ -635,6 +635,36 @@ async def get_session_evaluation(
     return job
 
 
+@app.get("/api/session/{session_id}/trace", tags=["可观测性"])
+async def get_session_trace(
+    session_id: str,
+    agent: TravelAgent = Depends(get_agent),
+    memory_manager: MemoryManager = Depends(get_memory_manager),
+) -> dict[str, Any]:
+    """返回本地运行轨迹及对应的 Langfuse Trace Observations。"""
+    state = await agent.get_session_state(session_id)
+    if not state:
+        state = memory_manager.get_session_snapshot(session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail=f"会话 {session_id} 不存在或已过期")
+
+    serializable_state = json.loads(json.dumps(state, default=str))
+    # 轨迹页只处理可观测性数据，不把评测结果带入数据源。
+    serializable_state.pop("evaluation", None)
+    serializable_state.pop("evaluation_meta", None)
+
+    trace_id = serializable_state.get("trace_id")
+    langfuse_data = None
+    if trace_id:
+        langfuse_data = await asyncio.to_thread(get_langfuse().fetch_trace_data, str(trace_id))
+
+    return {
+        "session": serializable_state,
+        "trace_id": trace_id,
+        "langfuse": langfuse_data,
+    }
+
+
 @app.delete("/api/sessions/{session_id}", tags=["行程规划"])
 async def delete_session(
     session_id: str,

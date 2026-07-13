@@ -364,6 +364,40 @@ class LangfuseClient:
         except Exception:
             return None
 
+    def fetch_trace_data(self, trace_id: str) -> dict[str, Any] | None:
+        """从 Langfuse Public API 读取一个 Trace 及其 Observations。
+
+        Langfuse Python SDK 主要负责写入观测数据，因此读取侧使用同一组服务端凭据
+        调用 Public API。失败时返回 None，让前端继续使用本地持久化轨迹。
+        """
+        if not self.is_enabled or not trace_id:
+            return None
+
+        try:
+            import httpx
+            import os
+            from config import settings
+
+            base_url = (os.getenv("LANGFUSE_BASE_URL") or settings.langfuse_host).rstrip("/")
+            auth = (settings.langfuse_public_key, settings.langfuse_secret_key)
+            with httpx.Client(timeout=10.0, auth=auth, headers={"Accept": "application/json"}) as client:
+                trace_response = client.get(f"{base_url}/api/public/traces/{trace_id}")
+                observations_response = client.get(
+                    f"{base_url}/api/public/observations",
+                    params={"traceId": trace_id, "limit": 1000},
+                )
+                trace_response.raise_for_status()
+                observations_response.raise_for_status()
+
+                observations_payload = observations_response.json()
+                observations = observations_payload.get("data", []) if isinstance(observations_payload, dict) else []
+                return {
+                    "trace": trace_response.json(),
+                    "observations": observations if isinstance(observations, list) else [],
+                }
+        except Exception:
+            return None
+
     def add_score(
         self,
         trace_id: str | None,

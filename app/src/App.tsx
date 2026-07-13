@@ -7,6 +7,7 @@ import Preferences from './pages/Preferences'
 import Security from './pages/Security'
 import HowItWorks from './pages/HowItWorks'
 import EvaluationReport from './pages/EvaluationReport'
+import TraceReport from './pages/TraceReport'
 
 export default function App() {
   return (
@@ -19,6 +20,7 @@ export default function App() {
           </TravelProvider>
         } />
         <Route path="/evaluation" element={<EvaluationReport />} />
+        <Route path="/trace" element={<TraceReport />} />
         <Route path="/preferences" element={<Preferences />} />
         <Route path="/security" element={<Security />} />
         <Route path="/how-it-works" element={<HowItWorks />} />
